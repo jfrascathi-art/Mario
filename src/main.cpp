@@ -1,23 +1,69 @@
 #include "lvgl.h"
+#include <Arduino.h>
 
-static void event_handler(lv_event_t * e)
+#define JOY_X A0
+#define JOY_Y A1
+
+#define BUTTON_JUMP D6
+#define BUTTON_DOWN D7
+
+#define INPUTS_H
+
+struct InputState
 {
-    lv_event_code_t code = lv_event_get_code(e);
+  int joyX;
+  int joyY;
 
-    if(code == LV_EVENT_CLICKED) {
-        LV_LOG_USER("Clicked");
-    }
-    else if(code == LV_EVENT_VALUE_CHANGED) {
-        LV_LOG_USER("Toggled");
-    }
+  bool buttonJump;
+  bool buttonDown;
+};
+
+void initInputs();
+void updateInputs();
+InputState inputs;
+
+void initInputs()
+{
+  pinMode(BUTTON_JUMP, INPUT_PULLUP);
+  pinMode(BUTTON_DOWN, INPUT_PULLUP);
+}
+
+void updateInputs()
+{
+  inputs.joyX = analogRead(JOY_X);
+  inputs.joyY = analogRead(JOY_Y);
+
+  inputs.buttonJump = !digitalRead(BUTTON_JUMP);
+  inputs.buttonDown = !digitalRead(BUTTON_DOWN);
+}
+
+InputState getInputs()
+{
+  return inputs;
+}
+
+InputState getInputs();
+
+static void event_handler(lv_event_t *e)
+{
+  lv_event_code_t code = lv_event_get_code(e);
+
+  if (code == LV_EVENT_CLICKED)
+  {
+    LV_LOG_USER("Clicked");
+  }
+  else if (code == LV_EVENT_VALUE_CHANGED)
+  {
+    LV_LOG_USER("Toggled");
+  }
 }
 
 void testLvgl()
 {
   // Initialisations générales
-  lv_obj_t * label;
+  lv_obj_t *label;
 
-  lv_obj_t * btn1 = lv_button_create(lv_screen_active());
+  lv_obj_t *btn1 = lv_button_create(lv_screen_active());
   lv_obj_add_event_cb(btn1, event_handler, LV_EVENT_ALL, NULL);
   lv_obj_align(btn1, LV_ALIGN_CENTER, 0, -40);
   lv_obj_remove_flag(btn1, LV_OBJ_FLAG_PRESS_LOCK);
@@ -26,7 +72,7 @@ void testLvgl()
   lv_label_set_text(label, "Button");
   lv_obj_center(label);
 
-  lv_obj_t * btn2 = lv_button_create(lv_screen_active());
+  lv_obj_t *btn2 = lv_button_create(lv_screen_active());
   lv_obj_add_event_cb(btn2, event_handler, LV_EVENT_ALL, NULL);
   lv_obj_align(btn2, LV_ALIGN_CENTER, 0, 40);
   lv_obj_add_flag(btn2, LV_OBJ_FLAG_CHECKABLE);
@@ -50,6 +96,7 @@ void mySetup()
   // lv_demo_widgets();
 
   // Initialisations générales
+  initInputs();
   testLvgl();
 }
 
@@ -67,6 +114,20 @@ void myTask(void *pvParameters)
   while (1)
   {
     // Loop
+    updateInputs();
+    InputState inputs = getInputs();
+
+    Serial.print("X: ");
+    Serial.print(inputs.joyX);
+
+    Serial.print(" Y: ");
+    Serial.print(inputs.joyY);
+
+    Serial.print(" Jump: ");
+    Serial.print(inputs.buttonJump);
+
+    Serial.print(" Down: ");
+    Serial.println(inputs.buttonDown);
 
     // Endort la tâche pendant le temps restant par rapport au réveil,
     // ici 200ms, donc la tâche s'effectue toutes les 200ms
