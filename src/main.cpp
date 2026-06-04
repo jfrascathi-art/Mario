@@ -12,6 +12,13 @@
 #define JOY_DEADZONE  80
 #define JOY_MAX      1023
 
+enum AppScreen {
+    SCREEN_JOYSTICK_TEST, //écran de test du joystick AU DÉMARRAGE
+    SCREEN_MENU,
+    SCREEN_GAME
+};
+AppScreen currentScreen = SCREEN_JOYSTICK_TEST; //commence par le test
+
 static void event_handler(lv_event_t *e)
 {
   lv_event_code_t code = lv_event_get_code(e);
@@ -70,21 +77,17 @@ struct InputState
 
   float normalizedX() const {
     if (isLeft())
-      return -(float)(JOY_CENTER - JOY_DEADZONE - joyX)
-                   / (float)(JOY_CENTER - JOY_DEADZONE);
+      return -(float)(JOY_CENTER - JOY_DEADZONE - joyX) / (float)(JOY_CENTER - JOY_DEADZONE);
     if (isRight())
-      return  (float)(joyX - JOY_CENTER - JOY_DEADZONE)
-                   / (float)(JOY_MAX - JOY_CENTER - JOY_DEADZONE);
+      return  (float)(joyX - JOY_CENTER - JOY_DEADZONE) / (float)(JOY_MAX - JOY_CENTER - JOY_DEADZONE);
     return 0.0f;
   }
 
   float normalizedY() const {
     if (isUp())
-      return -(float)(JOY_CENTER - JOY_DEADZONE - joyY)
-                   / (float)(JOY_CENTER - JOY_DEADZONE);
+      return -(float)(JOY_CENTER - JOY_DEADZONE - joyY) / (float)(JOY_CENTER - JOY_DEADZONE);
     if (isDown())
-      return  (float)(joyY - JOY_CENTER - JOY_DEADZONE)
-                   / (float)(JOY_MAX - JOY_CENTER - JOY_DEADZONE);
+      return  (float)(joyY - JOY_CENTER - JOY_DEADZONE) / (float)(JOY_MAX - JOY_CENTER - JOY_DEADZONE);
     return 0.0f;
   }
 
