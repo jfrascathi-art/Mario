@@ -1,5 +1,4 @@
 #include "lvgl.h"
-#include <Arduino.h>
 
 #define JOY_X A0
 #define JOY_Y A1
@@ -9,40 +8,6 @@
 
 #define INPUTS_H
 
-struct InputState
-{
-  int joyX;
-  int joyY;
-
-  bool buttonJump;
-  bool buttonDown;
-};
-
-void initInputs();
-void updateInputs();
-InputState inputs;
-
-void initInputs()
-{
-  pinMode(BUTTON_JUMP, INPUT_PULLUP);
-  pinMode(BUTTON_DOWN, INPUT_PULLUP);
-}
-
-void updateInputs()
-{
-  inputs.joyX = analogRead(JOY_X);
-  inputs.joyY = analogRead(JOY_Y);
-
-  inputs.buttonJump = !digitalRead(BUTTON_JUMP);
-  inputs.buttonDown = !digitalRead(BUTTON_DOWN);
-}
-
-InputState getInputs()
-{
-  return inputs;
-}
-
-InputState getInputs();
 
 static void event_handler(lv_event_t *e)
 {
@@ -86,6 +51,41 @@ void testLvgl()
 #ifdef ARDUINO
 
 #include "lvglDrivers.h"
+
+struct InputState
+{
+  int joyX;
+  int joyY;
+
+  bool buttonJump;
+  bool buttonDown;
+};
+
+void initInputs();
+void updateInputs();
+InputState inputs;
+
+void initInputs()
+{
+  pinMode(BUTTON_JUMP, INPUT_PULLUP);
+  pinMode(BUTTON_DOWN, INPUT_PULLUP);
+}
+
+void updateInputs()
+{
+  inputs.joyX = analogRead(JOY_X);
+  inputs.joyY = analogRead(JOY_Y);
+
+  inputs.buttonJump = !digitalRead(BUTTON_JUMP);
+  inputs.buttonDown = !digitalRead(BUTTON_DOWN);
+}
+
+InputState getInputs()
+{
+  return inputs;
+}
+
+InputState getInputs();
 
 // à décommenter pour tester la démo
 // #include "demos/lv_demos.h"
