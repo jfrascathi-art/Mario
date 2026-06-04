@@ -8,40 +8,9 @@
 
 #define INPUTS_H
 
-struct InputState
-{
-  int joyX;
-  int joyY;
-
-  bool buttonJump;
-  bool buttonDown;
-};
-
-void initInputs();
-void updateInputs();
-InputState inputs;
-
-void initInputs()
-{
-  pinMode(BUTTON_JUMP, INPUT_PULLUP);
-  pinMode(BUTTON_DOWN, INPUT_PULLUP);
-}
-
-void updateInputs()
-{
-  inputs.joyX = analogRead(JOY_X);
-  inputs.joyY = analogRead(JOY_Y);
-
-  inputs.buttonJump = !digitalRead(BUTTON_JUMP);
-  inputs.buttonDown = !digitalRead(BUTTON_DOWN);
-}
-
-InputState getInputs()
-{
-  return inputs;
-}
-
-InputState getInputs();
+#define JOY_CENTER   512
+#define JOY_DEADZONE  80
+#define JOY_MAX      1023
 
 static void event_handler(lv_event_t *e)
 {
@@ -85,6 +54,67 @@ void testLvgl()
 #ifdef ARDUINO
 
 #include "lvglDrivers.h"
+
+struct InputState
+{
+  int joyX;
+  int joyY;
+
+  bool buttonJump;
+  bool buttonDown;
+
+   bool isLeft()  const { return joyX < JOY_CENTER - JOY_DEADZONE; }
+  bool isRight() const { return joyX > JOY_CENTER + JOY_DEADZONE; }
+  bool isUp()    const { return joyY < JOY_CENTER - JOY_DEADZONE; }
+  bool isDown()  const { return joyY > JOY_CENTER + JOY_DEADZONE; }
+
+  float normalizedX() const {
+    if (isLeft())
+      return -(float)(JOY_CENTER - JOY_DEADZONE - joyX)
+                   / (float)(JOY_CENTER - JOY_DEADZONE);
+    if (isRight())
+      return  (float)(joyX - JOY_CENTER - JOY_DEADZONE)
+                   / (float)(JOY_MAX - JOY_CENTER - JOY_DEADZONE);
+    return 0.0f;
+  }
+
+  float normalizedY() const {
+    if (isUp())
+      return -(float)(JOY_CENTER - JOY_DEADZONE - joyY)
+                   / (float)(JOY_CENTER - JOY_DEADZONE);
+    if (isDown())
+      return  (float)(joyY - JOY_CENTER - JOY_DEADZONE)
+                   / (float)(JOY_MAX - JOY_CENTER - JOY_DEADZONE);
+    return 0.0f;
+  }
+
+};
+
+void initInputs();
+void updateInputs();
+InputState inputs;
+
+void initInputs()
+{
+  pinMode(BUTTON_JUMP, INPUT_PULLUP);
+  pinMode(BUTTON_DOWN, INPUT_PULLUP);
+}
+
+void updateInputs()
+{
+  inputs.joyX = analogRead(JOY_X);
+  inputs.joyY = analogRead(JOY_Y);
+
+  inputs.buttonJump = !digitalRead(BUTTON_JUMP);
+  inputs.buttonDown = !digitalRead(BUTTON_DOWN);
+}
+
+InputState getInputs()
+{
+  return inputs;
+}
+
+InputState getInputs();
 
 // à décommenter pour tester la démo
 // #include "demos/lv_demos.h"
