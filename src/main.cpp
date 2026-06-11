@@ -59,8 +59,7 @@ struct InputState
   bool isDown() const { return joyY > JOY_CENTER + JOY_DEADZONE; }
   float normalizedX() const
   {
-    // Plage max utile ≈ ±67 counts
-    const float MAX_RANGE = 65.0f; // remplace JOY_CENTER - JOY_DEADZONE
+    const float MAX_RANGE = 65.0f;
     if (isLeft())
       return -(float)(JOY_CENTER - JOY_DEADZONE - joyX) / MAX_RANGE;
     if (isRight())
@@ -138,20 +137,42 @@ int currentLevel = 0, activeSaveSlot = 0;
 #define JUMP_VELOCITY -9.0f
 #define GROUND_Y 200.0f
 
-// ── ÉTAPE 5 AJOUT : structure d'une plateforme ───────────────────────────────
+// ── Ces constantes sont utilisées dans updateGame() ET dans le rendu ─────────
+// Elles doivent être définies AVANT updateGame() pour que le compilateur
+// les connaisse quand il compile cette fonction.
+#define SCREEN_W 480
+#define SCREEN_H 272
+#define PLAYER_W 16
+#define PLAYER_H 24
+#define GROUND_VISUAL_Y 200
+#define WORLD_W 2000 // largeur totale du niveau en pixels monde
+
+// cameraX est déclarée ici car updateGame() doit pouvoir la remettre à 0
+// lors d'un respawn (mort dans un trou). Elle est définie globalement
+// pour être partagée entre updateGame() et renderGame().
+static float cameraX = 0.0f;
+
+// ── Structure d'une plateforme ────────────────────────────────────────────────
 // Une plateforme = rectangle dans le monde (coordonnées monde, pas écran).
 // x,y = coin haut-gauche | w,h = largeur/hauteur | color = couleur LVGL.
 // Les coordonnées X peuvent dépasser 480px → le niveau défile avec la caméra.
+// Les dalles de SOL sont aussi des plateformes (placées à y=GROUND_Y,
+// très hautes) — un trou = espace vide entre deux dalles en X.
 struct Platform
 {
   float x, y, w, h;
   uint32_t color;
 };
-#define MAX_PLATFORMS 16                       // nombre max de plateformes par niveau
+
+// ── MODIFIÉ : MAX_PLATFORMS agrandi pour contenir aussi les dalles de sol ─────
+// Niveau 0 : 3 dalles de sol + 4 plateformes flottantes = 7 objets
+// Niveau 1 : 3 dalles de sol + 5 plateformes flottantes = 8 objets
+// On prend 24 pour avoir de la marge pour les niveaux futurs.
+#define MAX_PLATFORMS 24
+
 Platform platforms[MAX_PLATFORMS];             // tableau des plateformes du niveau courant
 int platformCount = 0;                         // combien sont actives dans ce niveau
 static lv_obj_t *platObjs[MAX_PLATFORMS] = {}; // rectangle LVGL par plateforme
-// ── FIN ÉTAPE 5 AJOUT : structure ────────────────────────────────────────────
 
 // sauvegardes
 void initSaves()
@@ -208,7 +229,7 @@ void saveCurrentGame()
   saves[activeSaveSlot].characterId = player.characterId;
 }
 
-// moteur de jeu (physique) — MODIFIÉ ÉTAPE 5 : ajout collision plateformes
+// moteur de jeu (physique)
 void updateGame(InputState &in)
 {
   player.velX = in.normalizedX() * WALK_SPEED;
@@ -221,59 +242,66 @@ void updateGame(InputState &in)
   player.x += player.velX;
   player.y += player.velY;
 
-  // ── ÉTAPE 5 AJOUT : collision AABB avec les plateformes ──────────────────
-  // AABB = Axis-Aligned Bounding Box.
-  // On compare le rectangle du joueur avec chaque rectangle de plateforme.
-  // Si les deux se chevauchent EN X et EN Y, et que le joueur DESCEND
-  // (velY > 0), on le pose sur la surface de la plateforme.
+  // ── Collision AABB avec les plateformes ET les dalles de sol ─────────────
+  // Le sol est maintenant fait de dalles dans platforms[], exactement comme
+  // les plateformes flottantes. La même détection AABB s'applique aux deux.
+  // Un trou = absence de dalle → le joueur tombe librement.
   //
-  // Pourquoi tester velY > 0 ?
-  //   Sans ce test, en sautant PAR EN DESSOUS d'une plateforme le joueur
-  //   serait bloqué contre le dessous au lieu de passer à travers.
-  //
-  // Le joueur : player.x = bord gauche, player.y = bas des pieds.
-  // Taille hitbox : PW × PH pixels.
-  const float PW = 16.0f; // largeur hitbox joueur
-  const float PH = 26.0f; // hauteur hitbox joueur (13 rows × S=2)
+  // AABB : on teste si le rectangle joueur chevauche le rectangle plateforme.
+  // On n'atterrit que si le joueur DESCEND (velY > 0) pour pouvoir sauter
+  // par en dessous sans être bloqué.
+  const float PW = 16.0f;
+  const float PH = 26.0f;
+  float py2_avant = player.y - player.velY; // Y pieds avant ce frame
 
   for (int i = 0; i < platformCount; i++)
   {
     Platform &p = platforms[i];
 
-    // Bords du joueur
-    float px1 = player.x;      // gauche
-    float px2 = player.x + PW; // droite
-    float py1 = player.y - PH; // haut (chapeau)
-    float py2 = player.y;      // bas  (pieds)
+    float px1 = player.x;
+    float px2 = player.x + PW;
+    float py2 = player.y; // Y pieds après mouvement
 
-    // Bords de la plateforme
     float plx1 = p.x;
     float plx2 = p.x + p.w;
-    float ply1 = p.y;       // surface (haut) — là où on marche
-    float ply2 = p.y + p.h; // dessous
+    float ply1 = p.y;
 
-    // Chevauchement horizontal ET vertical ?
     bool overlapX = (px2 > plx1) && (px1 < plx2);
-    bool overlapY = (py2 > ply1) && (py1 < ply2);
+    // Traversée vers le bas : pieds étaient AU-DESSUS et sont maintenant EN-DESSOUS
+    bool crossedTop = (py2_avant <= ply1) && (py2 >= ply1);
 
-    if (overlapX && overlapY && player.velY > 0)
+    if (overlapX && crossedTop && player.velY > 0)
     {
-      // Atterrissage : on pose les pieds exactement sur le haut de la plateforme
       player.y = ply1;
       player.velY = 0.0f;
       player.onGround = true;
     }
   }
-  // ── FIN ÉTAPE 5 AJOUT : collision ────────────────────────────────────────
 
-  if (player.y >= GROUND_Y)
+  // ── MODIFIÉ : plus de sol infini ──────────────────────────────────────────
+  // Avant : if (player.y >= GROUND_Y) → bloquait toujours à GROUND_Y,
+  //         donc le joueur ne pouvait jamais tomber dans un trou.
+  // Maintenant : le sol est fait de dalles dans platforms[].
+  // Si le joueur tombe sous l'écran (trou ou bord) → il perd une vie
+  // et respawn au début du niveau.
+  if (player.y > SCREEN_H + 30)
   {
+    player.lives--;
+    player.x = 50.0f;
     player.y = GROUND_Y;
+    player.velX = 0.0f;
     player.velY = 0.0f;
     player.onGround = true;
+    cameraX = 0.0f; // remet la caméra au début
   }
+
+  // Bord gauche : le joueur ne peut pas sortir à gauche
   if (player.x < 0.0f)
     player.x = 0.0f;
+
+  // Bord droit : bloque à la fin du monde
+  if (player.x > WORLD_W - 16.0f)
+    player.x = WORLD_W - 16.0f;
 }
 
 // écran test joystick
@@ -380,7 +408,7 @@ void updateJoystickTest(InputState &in)
   lv_label_set_text(labelButtons, buf);
 }
 
-// palette pastel menu (parce que c'est plus joli)
+// palette pastel menu
 #define COL_BG 0xD6F0E8
 #define COL_SLOT_IDLE 0xC8EAE0
 #define COL_SLOT_SEL 0x5DCAA5
@@ -412,7 +440,7 @@ static void styleSlotBtn(lv_obj_t *btn, bool sel)
   lv_obj_set_style_border_width(btn, 2, 0);
 }
 void showGame();
-void renderGame(); // déclaration anticipée — défini plus bas, appelé depuis initGameObjects
+void renderGame();
 static void slotBtnCb(lv_event_t *e)
 {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED)
@@ -551,29 +579,14 @@ void showMenu()
   lv_obj_center(startLbl);
 }
 
-#define SCREEN_W 480
-#define SCREEN_H 272
-#define PLAYER_W 16
-#define PLAYER_H 24
-#define GROUND_VISUAL_Y 200
-
-// ── ÉTAPE 5 AJOUT : largeur du monde ─────────────────────────────────────────
-// Le sol et l'herbe doivent être plus larges que l'écran pour ne pas
-// avoir un bord visible quand la caméra avance.
-// On les crée à WORLD_W px de large et on les repositionne comme les plateformes.
-#define WORLD_W 2000 // largeur totale du niveau en pixels monde
-// ── FIN ÉTAPE 5 AJOUT : largeur du monde ─────────────────────────────────────
-
 #define SKY_COLOR 0xB3E5FC
 #define GROUND_COLOR 0x4A7C3F
 #define GRASS_COLOR 0x66BB6A
 
 static const uint32_t playerColors[3] = {0xE53935, 0x43A047, 0x1E88E5};
 
-static float cameraX = 0.0f;
-
 static lv_obj_t *objSky = nullptr;
-static lv_obj_t *objGround = nullptr;
+static lv_obj_t *objGround = nullptr; // gardé pour la bande d'herbe décorative
 static lv_obj_t *objGrass = nullptr;
 static lv_obj_t *objPlayer = nullptr;
 static lv_obj_t *objHead = nullptr;
@@ -628,17 +641,17 @@ static void moveSprite(lv_obj_t *obj, int bx, int by, int dx, int dy)
     lv_obj_set_pos(obj, bx + dx, by + dy);
 }
 
-// ── ÉTAPE 5 AJOUT : chargement des plateformes d'un niveau ───────────────────
-// Appelée depuis initGameObjects() à chaque démarrage de niveau.
-// - Détruit les anciens objets LVGL de plateformes.
-// - Remplit le tableau platforms[] selon currentLevel.
-// - Crée un rectangle LVGL par plateforme.
+// ── Chargement des plateformes ET des dalles de sol d'un niveau ──────────────
+// Le sol est maintenant fait de dalles dans ce même tableau.
+// Format des dalles de sol :
+//   { x_debut, GROUND_Y, largeur, SCREEN_H, GROUND_COLOR }
+// La hauteur SCREEN_H garantit qu'elles couvrent jusqu'en bas de l'écran.
+// Un trou = simplement un espace vide entre deux dalles en X.
 //
-// Coordonnées "monde" : x peut dépasser 480px (le niveau défile).
-// y = bord HAUT de la surface → le joueur atterrit à cette hauteur.
+// Ordre dans le tableau : dalles de sol EN PREMIER, plateformes flottantes ensuite.
+// (pas d'importance pour la physique, mais aide à lire les données)
 void loadLevelPlatforms(lv_obj_t *scr)
 {
-  // Détruit les rectangles LVGL du niveau précédent
   for (int i = 0; i < platformCount; i++)
   {
     if (platObjs[i])
@@ -649,26 +662,49 @@ void loadLevelPlatforms(lv_obj_t *scr)
   }
   platformCount = 0;
 
-  // Format : { x_monde, y_monde, largeur, hauteur, couleur }
   if (currentLevel == 0)
-  {
-    platforms[0] = {180, 160, 80, 12, 0x795548};
-    platforms[1] = {320, 130, 60, 12, 0x795548};
-    platforms[2] = {500, 150, 100, 12, 0x795548};
-    platforms[3] = {680, 120, 80, 12, 0x795548};
-    platformCount = 4;
-  }
+{
+  // ── Dalles de sol ──────────────────────────────────────────────────────
+  platforms[0] = {   0, GROUND_Y, 350, SCREEN_H, 0x4A7C3F }; // sol départ
+  // Trou 1 : 130px — pas de plateforme au-dessus, il faut sauter loin
+  platforms[1] = { 480, GROUND_Y, 300, SCREEN_H, 0x4A7C3F };
+  // Trou 2 : 120px — une plateforme intermédiaire pour aider
+  platforms[2] = { 900, GROUND_Y, 400, SCREEN_H, 0x4A7C3F };
+  // Trou 3 : 150px — pas de plateforme, saut long
+  platforms[3] = {1200, GROUND_Y, 800, SCREEN_H, 0x4A7C3F };
+
+  // ── Plateformes flottantes ────────────────────────────────────────────
+  // Quelques plateformes decoratives sur le sol, pas au-dessus des trous 1 et 3
+  platforms[4] = { 150, 160,  70, 12, 0x795548 }; // sur sol 1
+  platforms[5] = { 260, 130,  60, 12, 0x795548 }; // sur sol 1
+  // Plateforme intermédiaire AU-DESSUS du trou 2 seulement
+  platforms[6] = { 630, 155,  80, 12, 0x795548 }; // trou 2 → aide
+  platforms[7] = { 750, 125,  60, 12, 0x795548 }; // trou 2 → aide
+  // Plateforme sur sol 3, pas au-dessus du trou 3
+  platforms[8] = {1020, 155,  70, 12, 0x795548 }; // sur sol 3
+  platformCount = 9;
+}
   else if (currentLevel == 1)
   {
-    platforms[0] = {150, 150, 60, 12, 0x5D4037};
-    platforms[1] = {280, 120, 60, 12, 0x5D4037};
-    platforms[2] = {420, 100, 80, 12, 0x5D4037};
-    platforms[3] = {580, 130, 60, 12, 0x5D4037};
-    platforms[4] = {700, 90, 100, 12, 0x5D4037};
-    platformCount = 5;
+    // ── Dalles de sol (niveau 1 plus difficile) ─────────────────────────────
+    platforms[0] = {0, GROUND_Y, 300, SCREEN_H, 0x4A7C3F};
+    // Trou 1 : 150px
+    platforms[1] = {450, GROUND_Y, 250, SCREEN_H, 0x4A7C3F};
+    // Trou 2 : 200px
+    platforms[2] = {900, GROUND_Y, 300, SCREEN_H, 0x4A7C3F};
+    // Trou 3 : 150px
+    platforms[3] = {1350, GROUND_Y, 650, SCREEN_H, 0x4A7C3F};
+
+    // ── Plateformes flottantes ──────────────────────────────────────────────
+    platforms[4] = {150, 150, 60, 12, 0x5D4037};
+    platforms[5] = {280, 120, 60, 12, 0x5D4037};
+    platforms[6] = {370, 150, 60, 12, 0x5D4037}; // au-dessus du trou 1
+    platforms[7] = {700, 130, 60, 12, 0x5D4037};
+    platforms[8] = {800, 100, 80, 12, 0x5D4037}; // au-dessus du trou 2
+    platformCount = 9;
   }
 
-  // Crée les rectangles LVGL — position initiale = position monde (cameraX = 0 ici)
+  // Crée les rectangles LVGL pour chaque entrée du tableau
   for (int i = 0; i < platformCount; i++)
   {
     platObjs[i] = makeRect(scr,
@@ -679,7 +715,6 @@ void loadLevelPlatforms(lv_obj_t *scr)
                            platforms[i].color);
   }
 }
-// ── FIN ÉTAPE 5 AJOUT : chargement des plateformes ───────────────────────────
 
 static void drawPlayer(lv_obj_t *scr)
 {
@@ -746,15 +781,14 @@ void initGameObjects(lv_obj_t *scr)
   lv_obj_set_style_pad_all(scr, 0, 0);
   lv_obj_set_style_border_width(scr, 0, 0);
 
-  // ── ÉTAPE 5 MODIFIÉ : sol et herbe créés à WORLD_W de large ──────────────
-  // Avant : SCREEN_W (480px) → le sol s'arrêtait au bord de l'écran,
-  //         donc quand la caméra avançait on voyait le fond derrière.
-  // Maintenant : WORLD_W (2000px) → le sol couvre tout le niveau.
-  // Dans renderGame() on repositionne objGround et objGrass selon cameraX,
-  // exactement comme les plateformes.
-  objGround = makeRect(scr, 0, GROUND_VISUAL_Y, WORLD_W, SCREEN_H - GROUND_VISUAL_Y, GROUND_COLOR);
+  // ── MODIFIÉ : plus de rectangle de sol fixe ───────────────────────────────
+  // objGround est supprimé — le sol est maintenant dans platforms[].
+  // On garde objGrass comme bande décorative d'herbe sur WORLD_W de large,
+  // mais elle n'a plus de rôle physique (c'est purement visuel).
+  // Elle sera repositionnée dans renderGame() comme avant.
+  objGround = nullptr; // plus utilisé
   objGrass = makeRect(scr, 0, GROUND_VISUAL_Y, WORLD_W, 4, GRASS_COLOR);
-  // ── FIN ÉTAPE 5 MODIFIÉ ──────────────────────────────────────────────────
+  // ── FIN MODIFIÉ ───────────────────────────────────────────────────────────
 
   lblScore = makeHudLabel(scr, 8, 4, 160);
   lv_label_set_text(lblScore, "Score: 000000");
@@ -765,11 +799,9 @@ void initGameObjects(lv_obj_t *scr)
   lblDebug = makeHudLabel(scr, 8, SCREEN_H - 16, 140);
   lv_label_set_text(lblDebug, "x:0 y:0");
 
-  // ── ÉTAPE 5 AJOUT : charge les plateformes AVANT drawPlayer ──────────────
-  // L'ordre de création LVGL = ordre z (profondeur).
-  // Les plateformes doivent être SOUS le joueur → créées avant lui.
+  // Charge les dalles de sol + plateformes flottantes AVANT drawPlayer
+  // (ordre z LVGL : créé avant = dessiné en dessous)
   loadLevelPlatforms(scr);
-  // ── FIN ÉTAPE 5 AJOUT ────────────────────────────────────────────────────
 
   drawPlayer(scr);
   if (player.y < GROUND_Y)
@@ -851,26 +883,23 @@ void renderGame()
   snprintf(buf, sizeof(buf), "x:%.0f y:%.0f", player.x, player.y);
   lv_label_set_text(lblDebug, buf);
 
-  //Défilement du sol et de l'herbe
-  //On les décale de -cameraX pour qu'ils semblent défiler avec le niveau.
-  //Quand le joueur avance, cameraX augmente et le sol part vers la gauche.
-  if (objGround)
-    lv_obj_set_pos(objGround, (int)(-cameraX), GROUND_VISUAL_Y);
+  // Défilement de la bande d'herbe décorative (purement visuel)
   if (objGrass)
     lv_obj_set_pos(objGrass, (int)(-cameraX), GROUND_VISUAL_Y);
 
-  //Défilement des plateformes
-  // Position écran = position monde - cameraX.
+  // Défilement de toutes les plateformes + dalles de sol
+  // (même logique : position écran = position monde - cameraX)
   for (int i = 0; i < platformCount; i++)
   {
     if (platObjs[i])
     {
-      int sx = (int)(platforms[i].x - cameraX); // X écran
-      int sy = (int)(platforms[i].y);           // Y écran (Y monde = Y écran)
+      int sx = (int)(platforms[i].x - cameraX);
+      int sy = (int)(platforms[i].y);
       lv_obj_set_pos(platObjs[i], sx, sy);
     }
   }
 }
+
 void showGame()
 {
   lv_obj_t *scr = lv_scr_act();
@@ -904,12 +933,10 @@ void showGame()
   spShoeL = nullptr;
   spShoeR = nullptr;
 
-  // Remet les pointeurs de plateformes à zéro
-  // Évite les pointeurs "dangling" vers des objets LVGL détruits par lv_obj_clean() juste avant (quand on revient du menu).
   for (int i = 0; i < MAX_PLATFORMS; i++)
     platObjs[i] = nullptr;
   platformCount = 0;
-  
+
   initGameObjects(scr);
 }
 
@@ -932,7 +959,6 @@ void myTask(void *pvParameters)
     updateInputs();
     InputState inputs = getInputs();
 
-    // Verrouille LVGL avant de toucher aux objets graphiques
     lvglLock();
 
     if (currentScreen == SCREEN_JOYSTICK_TEST)
