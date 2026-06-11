@@ -89,7 +89,7 @@ void initInputs()
 void updateInputs()
 {
   inputs.joyX = analogRead(JOY_X);
-  inputs.joyY = 1023 - analogRead(JOY_Y); //sinon haut et bas inversés
+  inputs.joyY = 1023 - analogRead(JOY_Y); // sinon haut et bas inversés
   inputs.buttonJump = !digitalRead(BUTTON_JUMP);
   inputs.buttonDown = !digitalRead(BUTTON_DOWN);
 }
@@ -137,6 +137,21 @@ int currentLevel = 0, activeSaveSlot = 0;
 #define WALK_SPEED 3.0f
 #define JUMP_VELOCITY -9.0f
 #define GROUND_Y 200.0f
+
+// ── ÉTAPE 5 AJOUT : structure d'une plateforme ───────────────────────────────
+// Une plateforme = rectangle dans le monde (coordonnées monde, pas écran).
+// x,y = coin haut-gauche | w,h = largeur/hauteur | color = couleur LVGL.
+// Les coordonnées X peuvent dépasser 480px → le niveau défile avec la caméra.
+struct Platform
+{
+  float x, y, w, h;
+  uint32_t color;
+};
+#define MAX_PLATFORMS 16                       // nombre max de plateformes par niveau
+Platform platforms[MAX_PLATFORMS];             // tableau des plateformes du niveau courant
+int platformCount = 0;                         // combien sont actives dans ce niveau
+static lv_obj_t *platObjs[MAX_PLATFORMS] = {}; // rectangle LVGL par plateforme
+// ── FIN ÉTAPE 5 AJOUT : structure ────────────────────────────────────────────
 
 // sauvegardes
 void initSaves()
@@ -193,7 +208,7 @@ void saveCurrentGame()
   saves[activeSaveSlot].characterId = player.characterId;
 }
 
-// moteur de jeu (physique)
+// moteur de jeu (physique) — MODIFIÉ ÉTAPE 5 : ajout collision plateformes
 void updateGame(InputState &in)
 {
   player.velX = in.normalizedX() * WALK_SPEED;
@@ -205,6 +220,52 @@ void updateGame(InputState &in)
   player.velY += GRAVITY;
   player.x += player.velX;
   player.y += player.velY;
+
+  // ── ÉTAPE 5 AJOUT : collision AABB avec les plateformes ──────────────────
+  // AABB = Axis-Aligned Bounding Box.
+  // On compare le rectangle du joueur avec chaque rectangle de plateforme.
+  // Si les deux se chevauchent EN X et EN Y, et que le joueur DESCEND
+  // (velY > 0), on le pose sur la surface de la plateforme.
+  //
+  // Pourquoi tester velY > 0 ?
+  //   Sans ce test, en sautant PAR EN DESSOUS d'une plateforme le joueur
+  //   serait bloqué contre le dessous au lieu de passer à travers.
+  //
+  // Le joueur : player.x = bord gauche, player.y = bas des pieds.
+  // Taille hitbox : PW × PH pixels.
+  const float PW = 16.0f; // largeur hitbox joueur
+  const float PH = 26.0f; // hauteur hitbox joueur (13 rows × S=2)
+
+  for (int i = 0; i < platformCount; i++)
+  {
+    Platform &p = platforms[i];
+
+    // Bords du joueur
+    float px1 = player.x;      // gauche
+    float px2 = player.x + PW; // droite
+    float py1 = player.y - PH; // haut (chapeau)
+    float py2 = player.y;      // bas  (pieds)
+
+    // Bords de la plateforme
+    float plx1 = p.x;
+    float plx2 = p.x + p.w;
+    float ply1 = p.y;       // surface (haut) — là où on marche
+    float ply2 = p.y + p.h; // dessous
+
+    // Chevauchement horizontal ET vertical ?
+    bool overlapX = (px2 > plx1) && (px1 < plx2);
+    bool overlapY = (py2 > ply1) && (py1 < ply2);
+
+    if (overlapX && overlapY && player.velY > 0)
+    {
+      // Atterrissage : on pose les pieds exactement sur le haut de la plateforme
+      player.y = ply1;
+      player.velY = 0.0f;
+      player.onGround = true;
+    }
+  }
+  // ── FIN ÉTAPE 5 AJOUT : collision ────────────────────────────────────────
+
   if (player.y >= GROUND_Y)
   {
     player.y = GROUND_Y;
@@ -295,7 +356,6 @@ void updateJoystickTest(InputState &in)
                             lv_color_hex(ox == 0 && oy == 0 ? 0x999999 : 0x1D9E75), 0);
   char buf[48];
   snprintf(buf, sizeof(buf), "X:  %4d\nY:  %4d", in.joyX, in.joyY);
-
   lv_label_set_text(labelRaw, buf);
   snprintf(buf, sizeof(buf), "nX: %+.2f\nnY: %+.2f", in.normalizedX(), in.normalizedY());
   lv_label_set_text(labelNorm, buf);
@@ -491,62 +551,52 @@ void showMenu()
   lv_obj_center(startLbl);
 }
 
-// Chaque élément du jeu (sol, joueur, HUD) = un lv_obj_t*
-// Chaque frame : on met à jour position/taille/couleur des objets
-
 #define SCREEN_W 480
 #define SCREEN_H 272
 #define PLAYER_W 16
 #define PLAYER_H 24
 #define GROUND_VISUAL_Y 200
 
-// Couleur ciel (fond de l'écran de jeu)
-#define SKY_COLOR 0xB3E5FC    // bleu ciel pastel
-#define GROUND_COLOR 0x4A7C3F // vert herbe foncé
-#define GRASS_COLOR 0x66BB6A  // vert herbe clair (bande du dessus)
+// ── ÉTAPE 5 AJOUT : largeur du monde ─────────────────────────────────────────
+// Le sol et l'herbe doivent être plus larges que l'écran pour ne pas
+// avoir un bord visible quand la caméra avance.
+// On les crée à WORLD_W px de large et on les repositionne comme les plateformes.
+#define WORLD_W 2000 // largeur totale du niveau en pixels monde
+// ── FIN ÉTAPE 5 AJOUT : largeur du monde ─────────────────────────────────────
 
-// Couleurs des personnages
+#define SKY_COLOR 0xB3E5FC
+#define GROUND_COLOR 0x4A7C3F
+#define GRASS_COLOR 0x66BB6A
+
 static const uint32_t playerColors[3] = {0xE53935, 0x43A047, 0x1E88E5};
 
-// Caméra
 static float cameraX = 0.0f;
 
-// Objets LVGL du jeu — créés une fois dans showGame(), mis à jour dans renderGame()
-static lv_obj_t *objSky = nullptr;    // fond ciel (couleur de l'écran)
-static lv_obj_t *objGround = nullptr; // rectangle sol vert foncé
-static lv_obj_t *objGrass = nullptr;  // bande d'herbe claire (haut du sol)
-static lv_obj_t *objPlayer = nullptr; // corps du joueur
-static lv_obj_t *objHead = nullptr;   // tête du joueur (carré chair)
-static lv_obj_t *lblScore = nullptr;  // HUD score
-static lv_obj_t *lblLives = nullptr;  // HUD vies
-static lv_obj_t *lblLevel = nullptr;  // HUD niveau
-static lv_obj_t *lblDebug = nullptr;  // coordonnées debug (à enlever plus tard)
+static lv_obj_t *objSky = nullptr;
+static lv_obj_t *objGround = nullptr;
+static lv_obj_t *objGrass = nullptr;
+static lv_obj_t *objPlayer = nullptr;
+static lv_obj_t *objHead = nullptr;
+static lv_obj_t *lblScore = nullptr;
+static lv_obj_t *lblLives = nullptr;
+static lv_obj_t *lblLevel = nullptr;
+static lv_obj_t *lblDebug = nullptr;
 
-// ═══ AJOUT : objets supplémentaires pour les sprites détaillés ═══
-// Chaque partie du personnage = un lv_obj_t séparé.
-// On les déplace tous ensemble dans renderGame() via un offset commun.
-// Mario & Luigi : chapeau, cheveux x2, yeux x2, moustache, salopette bras x2,
-//                 jambe gauche, jambe droite, chaussure gauche, chaussure droite
-// Toad          : chapeau (bord haut + corps + bord bas), taches x3,
-//                 visage, yeux x2, nez, gilet, bras x2,
-//                 jambe gauche, jambe droite, chaussure gauche, chaussure droite
-static lv_obj_t *spHat = nullptr;                // chapeau principal (Mario/Luigi) ou corps chapeau (Toad)
-static lv_obj_t *spHatTop = nullptr;             // haut du chapeau Mario/Luigi (bande étroite) — bord haut rouge Toad
-static lv_obj_t *spHatBrim = nullptr;            // bord bas chapeau (Mario/Luigi) — bord bas blanc Toad
-static lv_obj_t *spHair[2] = {nullptr, nullptr}; // touffes de cheveux (Mario/Luigi) — taches 1&2 Toad
-static lv_obj_t *spSpot3 = nullptr;              // 3e tache Toad (pas utilisé Mario/Luigi)
-static lv_obj_t *spEye[2] = {nullptr, nullptr};  // yeux
-static lv_obj_t *spMustache = nullptr;           // moustache (Mario/Luigi) — nez Toad
-static lv_obj_t *spShirt = nullptr;              // chemise/gilet
-static lv_obj_t *spArm[2] = {nullptr, nullptr};  // bras gauche et droit (peau)
-static lv_obj_t *spLegL = nullptr;               // jambe gauche
-static lv_obj_t *spLegR = nullptr;               // jambe droite
-static lv_obj_t *spLegMid = nullptr;             // jonction entre les deux jambes
-static lv_obj_t *spShoeL = nullptr;              // chaussure gauche
-static lv_obj_t *spShoeR = nullptr;              // chaussure droite
-// ═══ FIN AJOUT variables sprites ═══
+static lv_obj_t *spHat = nullptr;
+static lv_obj_t *spHatTop = nullptr;
+static lv_obj_t *spHatBrim = nullptr;
+static lv_obj_t *spHair[2] = {nullptr, nullptr};
+static lv_obj_t *spSpot3 = nullptr;
+static lv_obj_t *spEye[2] = {nullptr, nullptr};
+static lv_obj_t *spMustache = nullptr;
+static lv_obj_t *spShirt = nullptr;
+static lv_obj_t *spArm[2] = {nullptr, nullptr};
+static lv_obj_t *spLegL = nullptr;
+static lv_obj_t *spLegR = nullptr;
+static lv_obj_t *spLegMid = nullptr;
+static lv_obj_t *spShoeL = nullptr;
+static lv_obj_t *spShoeR = nullptr;
 
-// Helper : crée un rectangle simple sans bordure ni padding
 static lv_obj_t *makeRect(lv_obj_t *parent, int x, int y, int w, int h, uint32_t color)
 {
   lv_obj_t *obj = lv_obj_create(parent);
@@ -557,53 +607,84 @@ static lv_obj_t *makeRect(lv_obj_t *parent, int x, int y, int w, int h, uint32_t
   lv_obj_set_style_border_width(obj, 0, 0);
   lv_obj_set_style_pad_all(obj, 0, 0);
   lv_obj_set_style_radius(obj, 0, 0);
-  // Désactive les interactions (pas de scroll, pas de clic)
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
   return obj;
 }
 
-// Helper : crée un label HUD (texte blanc en haut de l'écran)
 static lv_obj_t *makeHudLabel(lv_obj_t *parent, int x, int y, int w)
 {
   lv_obj_t *lbl = lv_label_create(parent);
   lv_obj_set_pos(lbl, x, y);
   lv_obj_set_width(lbl, w);
   lv_obj_set_style_text_color(lbl, lv_color_hex(0x212121), 0);
-  lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0); // fond transparent
+  lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0);
   return lbl;
 }
 
-// ═══ AJOUT : helper moveSprite — déplace un sprite à (bx+dx, by+dy) ═══
-// bx/by = position de base du personnage sur l'écran
-// dx/dy = décalage relatif à cette base (défini dans drawPlayer)
 static void moveSprite(lv_obj_t *obj, int bx, int by, int dx, int dy)
 {
   if (obj)
     lv_obj_set_pos(obj, bx + dx, by + dy);
 }
 
-// ═══ AJOUT : drawPlayer — construit le sprite du personnage ═══
-// Appelé UNE SEULE FOIS depuis initGameObjects().
-// S=2 : 1 cellule pixel-art = 2×2 px écran.
+// ── ÉTAPE 5 AJOUT : chargement des plateformes d'un niveau ───────────────────
+// Appelée depuis initGameObjects() à chaque démarrage de niveau.
+// - Détruit les anciens objets LVGL de plateformes.
+// - Remplit le tableau platforms[] selon currentLevel.
+// - Crée un rectangle LVGL par plateforme.
 //
-// SYSTÈME DE COORDONNÉES :
-//   player.y = position Y du BAS des chaussures (touche le sol).
-//   On définit "by" dans renderGame() comme :
-//     by = screenPY - SPRITE_H_PX + SHOE_BOTTOM_ROW*S
-//   où SPRITE_H_PX = hauteur totale du sprite en px
-//   et SHOE_BOTTOM_ROW = ligne pixel-art du bas des chaussures.
-//   Ainsi les chaussures touchent exactement player.y → le perso est sur le sol.
-//
-// Pour Mario/Luigi : sprite 12 col × 13 row → 24×26 px. Chaussures : bas row 12.
-// Pour Toad        : sprite 12 col × 15 row → 24×30 px. Chaussures : bas row 14.
+// Coordonnées "monde" : x peut dépasser 480px (le niveau défile).
+// y = bord HAUT de la surface → le joueur atterrit à cette hauteur.
+void loadLevelPlatforms(lv_obj_t *scr)
+{
+  // Détruit les rectangles LVGL du niveau précédent
+  for (int i = 0; i < platformCount; i++)
+  {
+    if (platObjs[i])
+    {
+      lv_obj_del(platObjs[i]);
+      platObjs[i] = nullptr;
+    }
+  }
+  platformCount = 0;
+
+  // Format : { x_monde, y_monde, largeur, hauteur, couleur }
+  if (currentLevel == 0)
+  {
+    platforms[0] = {180, 160, 80, 12, 0x795548};
+    platforms[1] = {320, 130, 60, 12, 0x795548};
+    platforms[2] = {500, 150, 100, 12, 0x795548};
+    platforms[3] = {680, 120, 80, 12, 0x795548};
+    platformCount = 4;
+  }
+  else if (currentLevel == 1)
+  {
+    platforms[0] = {150, 150, 60, 12, 0x5D4037};
+    platforms[1] = {280, 120, 60, 12, 0x5D4037};
+    platforms[2] = {420, 100, 80, 12, 0x5D4037};
+    platforms[3] = {580, 130, 60, 12, 0x5D4037};
+    platforms[4] = {700, 90, 100, 12, 0x5D4037};
+    platformCount = 5;
+  }
+
+  // Crée les rectangles LVGL — position initiale = position monde (cameraX = 0 ici)
+  for (int i = 0; i < platformCount; i++)
+  {
+    platObjs[i] = makeRect(scr,
+                           (int)(platforms[i].x - cameraX),
+                           (int)(platforms[i].y),
+                           (int)platforms[i].w,
+                           (int)platforms[i].h,
+                           platforms[i].color);
+  }
+}
+// ── FIN ÉTAPE 5 AJOUT : chargement des plateformes ───────────────────────────
+
 static void drawPlayer(lv_obj_t *scr)
 {
-  const int S = 2; // 1 cellule = 2px écran
-
+  const int S = 2;
   int c = player.characterId;
-
-  // ── Couleurs selon personnage ──────────────────────────────────────
   uint32_t colHat = (c == CHAR_LUIGI) ? 0x388E3C : 0xE53935;
   uint32_t colPants = 0x1565C0;
   uint32_t colShoes = 0x5D4037;
@@ -615,75 +696,66 @@ static void drawPlayer(lv_obj_t *scr)
 
   if (c == CHAR_MARIO || c == CHAR_LUIGI)
   {
-    // ── MARIO / LUIGI  (grille 12×13, S=2 → 24×26 px) ────────────
-    spHatTop = makeRect(scr, 0, 0, 6 * S, 2 * S, colHat); // col3..8  row0..1
-    spHat = makeRect(scr, 0, 0, 8 * S, 2 * S, colHat);    // col2..9  row1..2
+    spHatTop = makeRect(scr, 0, 0, 6 * S, 2 * S, colHat);
+    spHat = makeRect(scr, 0, 0, 8 * S, 2 * S, colHat);
     spHatBrim = nullptr;
-    objHead = makeRect(scr, 0, 0, 6 * S, 3 * S, colSkin);    // col3..8  row2..4
-    spHair[0] = makeRect(scr, 0, 0, 2 * S, 1 * S, colHair);  // col3..4  row2
-    spHair[1] = makeRect(scr, 0, 0, 2 * S, 1 * S, colHair);  // col7..8  row2
-    spEye[0] = makeRect(scr, 0, 0, 1 * S, 1 * S, colEyes);   // col4     row3
-    spEye[1] = makeRect(scr, 0, 0, 1 * S, 1 * S, colEyes);   // col7     row3
-    spMustache = makeRect(scr, 0, 0, 6 * S, 1 * S, colHair); // col3..8  row4
-    spShirt = makeRect(scr, 0, 0, 8 * S, 3 * S, colHat);     // col2..9  row5..7
-    spArm[0] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);   // col1     row5..6
-    spArm[1] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);   // col10    row5..6
-    spLegL = makeRect(scr, 0, 0, 3 * S, 3 * S, colPants);    // col2..4  row8..10
-    spLegR = makeRect(scr, 0, 0, 3 * S, 3 * S, colPants);    // col7..9  row8..10
-    spLegMid = makeRect(scr, 0, 0, 4 * S, 2 * S, colPants);  // col4..7  row8..9
-    spShoeL = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);   // col2..4  row11..12
-    spShoeR = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);   // col7..9  row11..12
+    objHead = makeRect(scr, 0, 0, 6 * S, 3 * S, colSkin);
+    spHair[0] = makeRect(scr, 0, 0, 2 * S, 1 * S, colHair);
+    spHair[1] = makeRect(scr, 0, 0, 2 * S, 1 * S, colHair);
+    spEye[0] = makeRect(scr, 0, 0, 1 * S, 1 * S, colEyes);
+    spEye[1] = makeRect(scr, 0, 0, 1 * S, 1 * S, colEyes);
+    spMustache = makeRect(scr, 0, 0, 6 * S, 1 * S, colHair);
+    spShirt = makeRect(scr, 0, 0, 8 * S, 3 * S, colHat);
+    spArm[0] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);
+    spArm[1] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);
+    spLegL = makeRect(scr, 0, 0, 3 * S, 3 * S, colPants);
+    spLegR = makeRect(scr, 0, 0, 3 * S, 3 * S, colPants);
+    spLegMid = makeRect(scr, 0, 0, 4 * S, 2 * S, colPants);
+    spShoeL = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);
+    spShoeR = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);
     spSpot3 = nullptr;
   }
   else
   {
-    // ── TOAD  (grille 12×15, S=2 → 24×30 px) ─────────────────────
-    spHatTop = makeRect(scr, 0, 0, 12 * S, 1 * S, colHat);   // col0..11 row0
-    spHat = makeRect(scr, 0, 0, 12 * S, 3 * S, colHat);      // col0..11 row1..3
-    spHatBrim = makeRect(scr, 0, 0, 10 * S, 1 * S, colBrim); // col1..10 row4
-    spHair[0] = makeRect(scr, 0, 0, 3 * S, 2 * S, colHair);  // col1..3  row1..2
-    spHair[1] = makeRect(scr, 0, 0, 2 * S, 2 * S, colHair);  // col5..6  row1..2
-    spSpot3 = makeRect(scr, 0, 0, 3 * S, 2 * S, colHair);    // col8..10 row1..2
-    objHead = makeRect(scr, 0, 0, 8 * S, 3 * S, colSkin);    // col2..9  row4..6
-    spEye[0] = makeRect(scr, 0, 0, 2 * S, 1 * S, colEyes);   // col3..4  row5
-    spEye[1] = makeRect(scr, 0, 0, 2 * S, 1 * S, colEyes);   // col7..8  row5
-    spMustache = makeRect(scr, 0, 0, 2 * S, 1 * S, colNose); // col5..6  row6 (nez)
-    spShirt = makeRect(scr, 0, 0, 8 * S, 3 * S, colPants);   // col2..9  row7..9
-    spArm[0] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);   // col1     row7..8
-    spArm[1] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);   // col10    row7..8
-    spLegL = makeRect(scr, 0, 0, 3 * S, 3 * S, 0xFFFFFF);    // col2..4  row10..12
-    spLegR = makeRect(scr, 0, 0, 3 * S, 3 * S, 0xFFFFFF);    // col7..9  row10..12
-    spLegMid = makeRect(scr, 0, 0, 4 * S, 2 * S, 0xFFFFFF);  // col4..7  row10..11
-    spShoeL = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);   // col2..4  row13..14
-    spShoeR = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);   // col7..9  row13..14
+    spHatTop = makeRect(scr, 0, 0, 12 * S, 1 * S, colHat);
+    spHat = makeRect(scr, 0, 0, 12 * S, 3 * S, colHat);
+    spHatBrim = makeRect(scr, 0, 0, 10 * S, 1 * S, colBrim);
+    spHair[0] = makeRect(scr, 0, 0, 3 * S, 2 * S, colHair);
+    spHair[1] = makeRect(scr, 0, 0, 2 * S, 2 * S, colHair);
+    spSpot3 = makeRect(scr, 0, 0, 3 * S, 2 * S, colHair);
+    objHead = makeRect(scr, 0, 0, 8 * S, 3 * S, colSkin);
+    spEye[0] = makeRect(scr, 0, 0, 2 * S, 1 * S, colEyes);
+    spEye[1] = makeRect(scr, 0, 0, 2 * S, 1 * S, colEyes);
+    spMustache = makeRect(scr, 0, 0, 2 * S, 1 * S, colNose);
+    spShirt = makeRect(scr, 0, 0, 8 * S, 3 * S, colPants);
+    spArm[0] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);
+    spArm[1] = makeRect(scr, 0, 0, 1 * S, 2 * S, colSkin);
+    spLegL = makeRect(scr, 0, 0, 3 * S, 3 * S, 0xFFFFFF);
+    spLegR = makeRect(scr, 0, 0, 3 * S, 3 * S, 0xFFFFFF);
+    spLegMid = makeRect(scr, 0, 0, 4 * S, 2 * S, 0xFFFFFF);
+    spShoeL = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);
+    spShoeR = makeRect(scr, 0, 0, 3 * S, 2 * S, colShoes);
   }
-
-  // objPlayer pointe sur spShirt pour que renderGame() teste != nullptr
   objPlayer = spShirt;
 }
-// ═══ FIN AJOUT drawPlayer ═══
 
-// Crée tous les objets du jeu (appelé une fois depuis showGame)
 void initGameObjects(lv_obj_t *scr)
 {
-  // Fond ciel = couleur de l'écran lui-même
   lv_obj_set_style_bg_color(scr, lv_color_hex(SKY_COLOR), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-
-  // LVGL 9 ajoute du padding par défaut sur lv_scr_act().
-  // On le supprime pour que lv_obj_set_pos(obj, 0, 0) = coin haut-gauche réel.
   lv_obj_set_style_pad_all(scr, 0, 0);
   lv_obj_set_style_border_width(scr, 0, 0);
 
-  // Sol (rectangle pleine largeur, du bas de l'écran jusqu'à GROUND_VISUAL_Y)
-  objGround = makeRect(scr, 0, GROUND_VISUAL_Y,
-                       SCREEN_W, SCREEN_H - GROUND_VISUAL_Y,
-                       GROUND_COLOR);
+  // ── ÉTAPE 5 MODIFIÉ : sol et herbe créés à WORLD_W de large ──────────────
+  // Avant : SCREEN_W (480px) → le sol s'arrêtait au bord de l'écran,
+  //         donc quand la caméra avançait on voyait le fond derrière.
+  // Maintenant : WORLD_W (2000px) → le sol couvre tout le niveau.
+  // Dans renderGame() on repositionne objGround et objGrass selon cameraX,
+  // exactement comme les plateformes.
+  objGround = makeRect(scr, 0, GROUND_VISUAL_Y, WORLD_W, SCREEN_H - GROUND_VISUAL_Y, GROUND_COLOR);
+  objGrass = makeRect(scr, 0, GROUND_VISUAL_Y, WORLD_W, 4, GRASS_COLOR);
+  // ── FIN ÉTAPE 5 MODIFIÉ ──────────────────────────────────────────────────
 
-  // Bande d'herbe claire sur le bord haut du sol (4px)
-  objGrass = makeRect(scr, 0, GROUND_VISUAL_Y, SCREEN_W, 4, GRASS_COLOR);
-
-  // Labels HUD — z-order : créés après les rectangles = dessinés par-dessus
   lblScore = makeHudLabel(scr, 8, 4, 160);
   lv_label_set_text(lblScore, "Score: 000000");
   lblLives = makeHudLabel(scr, 210, 4, 60);
@@ -693,124 +765,117 @@ void initGameObjects(lv_obj_t *scr)
   lblDebug = makeHudLabel(scr, 8, SCREEN_H - 16, 140);
   lv_label_set_text(lblDebug, "x:0 y:0");
 
-  // ═══ AJOUT : construit le sprite détaillé (remplace objPlayer/objHead basiques) ═══
+  // ── ÉTAPE 5 AJOUT : charge les plateformes AVANT drawPlayer ──────────────
+  // L'ordre de création LVGL = ordre z (profondeur).
+  // Les plateformes doivent être SOUS le joueur → créées avant lui.
+  loadLevelPlatforms(scr);
+  // ── FIN ÉTAPE 5 AJOUT ────────────────────────────────────────────────────
+
   drawPlayer(scr);
-  // Sécurité : si player.y n'est pas encore initialisé (vaut 0),
-  // on le force sur le sol pour éviter le flash en haut de l'écran.
   if (player.y < GROUND_Y)
     player.y = GROUND_Y;
   if (player.x < 50.0f)
     player.x = 50.0f;
-  // Force une première position correcte dès la création :
-  // sans ça le sprite reste à (0,0) jusqu'à la 1ère frame de renderGame()
-  // ce qui provoque un flash en haut à gauche.
   renderGame();
-  // ═══ FIN AJOUT ═══
 }
 
-// Met à jour la position/couleur des objets — appelé chaque frame
 void renderGame()
 {
   if (!objPlayer)
     return;
 
-  //  Caméra
-  // Cible : joueur au tiers gauche de l'écran
   float targetX = player.x - (float)SCREEN_W / 3.0f;
   if (targetX < 0.0f)
     targetX = 0.0f;
-  // Interpolation douce (lerp) : 15% de l'écart par frame → ~10 frames pour rattraper
   cameraX += (targetX - cameraX) * 0.15f;
 
-  // Position du joueur à l'écran
-  // screenX = worldX - cameraX  (conversion monde → écran)
   int screenPX = (int)(player.x - cameraX);
 
-  // ═══ AJOUT : calcul de by — bas des chaussures = niveau du sol ═══
-  // player.y est le bas des pieds (= GROUND_Y quand sur le sol).
-  // screenPY = position Y écran du bas des pieds.
-  // On remonte de (hauteur totale sprite) pour trouver le haut du chapeau.
-  // Mario/Luigi : 13 rows × S=2 = 26px de haut
-  // Toad        : 15 rows × S=2 = 30px de haut
   const int S = 2;
   int spriteH = (player.characterId == CHAR_TOAD) ? 15 * S : 13 * S;
-  int screenPY = (int)(player.y); // bas des pieds en Y écran
-  // by = coin haut-gauche du sprite (= haut du chapeau)
-  // bx = bord gauche du sprite (col 0)
+  int screenPY = (int)(player.y);
   int by = screenPY - spriteH;
-  int bx = screenPX; // col 0 = bord gauche du sprite
-  // ═══ FIN AJOUT calcul by ═══
+  int bx = screenPX;
 
-  // ═══ AJOUT : déplace tous les sous-sprites du personnage ═══
   int c = player.characterId;
 
   if (c == CHAR_MARIO || c == CHAR_LUIGI)
   {
-    moveSprite(spHatTop, bx, by, 3 * S, 0 * S);   // col3, row0
-    moveSprite(spHat, bx, by, 2 * S, 1 * S);      // col2, row1
-    moveSprite(objHead, bx, by, 3 * S, 2 * S);    // col3, row2
-    moveSprite(spHair[0], bx, by, 3 * S, 2 * S);  // col3, row2
-    moveSprite(spHair[1], bx, by, 7 * S, 2 * S);  // col7, row2
-    moveSprite(spEye[0], bx, by, 4 * S, 3 * S);   // col4, row3
-    moveSprite(spEye[1], bx, by, 7 * S, 3 * S);   // col7, row3
-    moveSprite(spMustache, bx, by, 3 * S, 4 * S); // col3, row4
-    moveSprite(spShirt, bx, by, 2 * S, 5 * S);    // col2, row5
-    moveSprite(spArm[0], bx, by, 1 * S, 5 * S);   // col1, row5
-    moveSprite(spArm[1], bx, by, 10 * S, 5 * S);  // col10,row5
-    moveSprite(spLegL, bx, by, 2 * S, 8 * S);     // col2, row8
-    moveSprite(spLegR, bx, by, 7 * S, 8 * S);     // col7, row8
-    moveSprite(spLegMid, bx, by, 4 * S, 8 * S);   // col4, row8
-    moveSprite(spShoeL, bx, by, 2 * S, 11 * S);   // col2, row11
-    moveSprite(spShoeR, bx, by, 7 * S, 11 * S);   // col7, row11
+    moveSprite(spHatTop, bx, by, 3 * S, 0 * S);
+    moveSprite(spHat, bx, by, 2 * S, 1 * S);
+    moveSprite(objHead, bx, by, 3 * S, 2 * S);
+    moveSprite(spHair[0], bx, by, 3 * S, 2 * S);
+    moveSprite(spHair[1], bx, by, 7 * S, 2 * S);
+    moveSprite(spEye[0], bx, by, 4 * S, 3 * S);
+    moveSprite(spEye[1], bx, by, 7 * S, 3 * S);
+    moveSprite(spMustache, bx, by, 3 * S, 4 * S);
+    moveSprite(spShirt, bx, by, 2 * S, 5 * S);
+    moveSprite(spArm[0], bx, by, 1 * S, 5 * S);
+    moveSprite(spArm[1], bx, by, 10 * S, 5 * S);
+    moveSprite(spLegL, bx, by, 2 * S, 8 * S);
+    moveSprite(spLegR, bx, by, 7 * S, 8 * S);
+    moveSprite(spLegMid, bx, by, 4 * S, 8 * S);
+    moveSprite(spShoeL, bx, by, 2 * S, 11 * S);
+    moveSprite(spShoeR, bx, by, 7 * S, 11 * S);
   }
   else
   {
-    moveSprite(spHatTop, bx, by, 0 * S, 0 * S);   // col0, row0
-    moveSprite(spHat, bx, by, 0 * S, 1 * S);      // col0, row1
-    moveSprite(spHatBrim, bx, by, 1 * S, 4 * S);  // col1, row4
-    moveSprite(spHair[0], bx, by, 1 * S, 1 * S);  // col1, row1
-    moveSprite(spHair[1], bx, by, 5 * S, 1 * S);  // col5, row1
-    moveSprite(spSpot3, bx, by, 8 * S, 1 * S);    // col8, row1
-    moveSprite(objHead, bx, by, 2 * S, 4 * S);    // col2, row4
-    moveSprite(spEye[0], bx, by, 3 * S, 5 * S);   // col3, row5
-    moveSprite(spEye[1], bx, by, 7 * S, 5 * S);   // col7, row5
-    moveSprite(spMustache, bx, by, 5 * S, 6 * S); // col5, row6
-    moveSprite(spShirt, bx, by, 2 * S, 7 * S);    // col2, row7
-    moveSprite(spArm[0], bx, by, 1 * S, 7 * S);   // col1, row7
-    moveSprite(spArm[1], bx, by, 10 * S, 7 * S);  // col10,row7
-    moveSprite(spLegL, bx, by, 2 * S, 10 * S);    // col2, row10
-    moveSprite(spLegR, bx, by, 7 * S, 10 * S);    // col7, row10
-    moveSprite(spLegMid, bx, by, 4 * S, 10 * S);  // col4, row10
-    moveSprite(spShoeL, bx, by, 2 * S, 13 * S);   // col2, row13
-    moveSprite(spShoeR, bx, by, 7 * S, 13 * S);   // col7, row13
+    moveSprite(spHatTop, bx, by, 0 * S, 0 * S);
+    moveSprite(spHat, bx, by, 0 * S, 1 * S);
+    moveSprite(spHatBrim, bx, by, 1 * S, 4 * S);
+    moveSprite(spHair[0], bx, by, 1 * S, 1 * S);
+    moveSprite(spHair[1], bx, by, 5 * S, 1 * S);
+    moveSprite(spSpot3, bx, by, 8 * S, 1 * S);
+    moveSprite(objHead, bx, by, 2 * S, 4 * S);
+    moveSprite(spEye[0], bx, by, 3 * S, 5 * S);
+    moveSprite(spEye[1], bx, by, 7 * S, 5 * S);
+    moveSprite(spMustache, bx, by, 5 * S, 6 * S);
+    moveSprite(spShirt, bx, by, 2 * S, 7 * S);
+    moveSprite(spArm[0], bx, by, 1 * S, 7 * S);
+    moveSprite(spArm[1], bx, by, 10 * S, 7 * S);
+    moveSprite(spLegL, bx, by, 2 * S, 10 * S);
+    moveSprite(spLegR, bx, by, 7 * S, 10 * S);
+    moveSprite(spLegMid, bx, by, 4 * S, 10 * S);
+    moveSprite(spShoeL, bx, by, 2 * S, 13 * S);
+    moveSprite(spShoeR, bx, by, 7 * S, 13 * S);
   }
-  // ═══ FIN AJOUT déplacement sprites ═══
 
   // HUD
   char buf[48];
   snprintf(buf, sizeof(buf), "Score: %06d", player.score);
   lv_label_set_text(lblScore, buf);
-
   snprintf(buf, sizeof(buf), "x%d", player.lives);
   lv_label_set_text(lblLives, buf);
-
   snprintf(buf, sizeof(buf), "Niv.%d", currentLevel + 1);
   lv_label_set_text(lblLevel, buf);
-
-  // Debug : position monde du joueur (à commenter une fois le jeu stable)
   snprintf(buf, sizeof(buf), "x:%.0f y:%.0f", player.x, player.y);
   lv_label_set_text(lblDebug, buf);
-}
 
-// Lance l'écran de jeu (appelé depuis startBtnCb)
+  //Défilement du sol et de l'herbe
+  //On les décale de -cameraX pour qu'ils semblent défiler avec le niveau.
+  //Quand le joueur avance, cameraX augmente et le sol part vers la gauche.
+  if (objGround)
+    lv_obj_set_pos(objGround, (int)(-cameraX), GROUND_VISUAL_Y);
+  if (objGrass)
+    lv_obj_set_pos(objGrass, (int)(-cameraX), GROUND_VISUAL_Y);
+
+  //Défilement des plateformes
+  // Position écran = position monde - cameraX.
+  for (int i = 0; i < platformCount; i++)
+  {
+    if (platObjs[i])
+    {
+      int sx = (int)(platforms[i].x - cameraX); // X écran
+      int sy = (int)(platforms[i].y);           // Y écran (Y monde = Y écran)
+      lv_obj_set_pos(platObjs[i], sx, sy);
+    }
+  }
+}
 void showGame()
 {
   lv_obj_t *scr = lv_scr_act();
-
-  // Remet la caméra au début du niveau
   cameraX = 0.0f;
 
-  // Remet les pointeurs à zéro (au cas où on reviendrait du menu)
   objSky = nullptr;
   objGround = nullptr;
   objGrass = nullptr;
@@ -821,7 +886,6 @@ void showGame()
   lblLevel = nullptr;
   lblDebug = nullptr;
 
-  // ═══ AJOUT : remet aussi les sprites à zéro ═══
   spHat = nullptr;
   spHatTop = nullptr;
   spHatBrim = nullptr;
@@ -839,14 +903,15 @@ void showGame()
   spLegMid = nullptr;
   spShoeL = nullptr;
   spShoeR = nullptr;
-  // ═══ FIN AJOUT ═══
 
-  // Crée tous les objets visuels du jeu
+  // Remet les pointeurs de plateformes à zéro
+  // Évite les pointeurs "dangling" vers des objets LVGL détruits par lv_obj_clean() juste avant (quand on revient du menu).
+  for (int i = 0; i < MAX_PLATFORMS; i++)
+    platObjs[i] = nullptr;
+  platformCount = 0;
+  
   initGameObjects(scr);
 }
-
-// à décommenter pour tester la démo
-// #include "demos/lv_demos.h"
 
 void mySetup()
 {
