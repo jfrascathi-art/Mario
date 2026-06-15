@@ -299,9 +299,15 @@ void updateGame(InputState &in)
       player.lives = 0;
     if (player.lives == 0)
     {
+      saves[activeSaveSlot].score = player.score;
+      saves[activeSaveSlot].currentLevel = currentLevel;
       triggerGameOver();
       return;
     }
+    // Respawn au debut du niveau actuel, score conserve
+    saves[activeSaveSlot].lives = player.lives;
+    saves[activeSaveSlot].score = player.score;
+    saves[activeSaveSlot].currentLevel = currentLevel;
     player.x = 50.0f;
     player.y = GROUND_Y;
     player.velX = 0.0f;
@@ -365,9 +371,15 @@ void updateGame(InputState &in)
           player.lives = 0;
         if (player.lives == 0)
         {
+          saves[activeSaveSlot].score = player.score;
+          saves[activeSaveSlot].currentLevel = currentLevel;
           triggerGameOver();
           return;
         }
+        // Respawn, score conserve
+        saves[activeSaveSlot].lives = player.lives;
+        saves[activeSaveSlot].score = player.score;
+        saves[activeSaveSlot].currentLevel = currentLevel;
         player.x = 50.0f;
         player.y = GROUND_Y;
         player.velX = 0.0f;
@@ -673,9 +685,12 @@ void triggerGameOver()
     goombas[j].objFeetR = nullptr;
   }
   goombaCount = 0;
+  // Sauvegarde le score et le niveau atteint avant de réinitialiser les vies.
+  // Ainsi quand on recharge ce slot, on repart du dernier niveau validé
+  // avec le score qu'on avait accumulé jusque-là.
   saves[activeSaveSlot].lives = 3;
-  saves[activeSaveSlot].score = 0;
-  saves[activeSaveSlot].currentLevel = 0;
+  // score et currentLevel sont déjà à jour (mis par nextLevel ou par
+  // les blocs de mort ci-dessus) — on ne les remet PAS à zéro.
   lv_obj_clean(lv_scr_act());
   currentScreen = SCREEN_MENU;
   showMenu();
