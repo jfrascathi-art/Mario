@@ -25,11 +25,22 @@ public:
 
 protected:
     // ── Helpers sol / plateformes / grottes ───────────────────────────────────
+    // Version "libre" (largeur/hauteur/couleur au choix) : gardée pour usage
+    // interne (addCave s'appuie dessus) et flexibilité future.
     void addPlatform(float x, float y, float w, float h, uint32_t color)
     {
         if (platformCount >= MAX_PLATFORMS)
             return;
         platforms[platformCount++] = {x, y, w, h, color, false};
+    }
+    // Version "uniforme" : c'est CELLE-CI que tous les Level*.h utilisent
+    // maintenant pour les plateformes flottantes. Taille et couleur fixées une
+    // fois pour toutes (PLATFORM_W/PLATFORM_H/PLATFORM_COLOR dans GameTypes.h)
+    // → impossible de créer accidentellement des plateformes de tailles ou
+    // couleurs différentes d'un niveau à l'autre.
+    void addPlatform(float x, float y)
+    {
+        addPlatform(x, y, PLATFORM_W, PLATFORM_H, PLATFORM_COLOR);
     }
     void addCave(float x, float w, uint32_t color)
     {
@@ -37,7 +48,7 @@ protected:
             return;
         platforms[platformCount++] = {x, (float)CAVE_Y, w, (float)CAVE_H, color, true};
     }
-    void addGround(float x, float w, uint32_t color = 0xB06A35)
+    void addGround(float x, float w, uint32_t color = GROUND_DIRT_COLOR)
     {
         if (platformCount >= MAX_PLATFORMS)
             return;

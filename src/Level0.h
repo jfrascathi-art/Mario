@@ -23,14 +23,14 @@ public:
         addGround(1220, 1900); // 2
 
         // ── Plateformes flottantes ────────────────────────────────────────────
-        addPlatform(200, 165, 70, 12, 0x795548);  // 3
-        addPlatform(350, 140, 60, 12, 0x795548);  // 4
-        addPlatform(700, 160, 80, 12, 0x795548);  // 5
-        addPlatform(900, 135, 60, 12, 0x795548);  // 6
-        addPlatform(1350, 155, 70, 12, 0x795548); // 7
-        addPlatform(1600, 130, 60, 12, 0x795548); // 8
-        addPlatform(1900, 155, 80, 12, 0x795548); // 9
-        addPlatform(2200, 140, 60, 12, 0x795548); // 10
+        addPlatform(200, 165);  // 3
+        addPlatform(350, 140);  // 4
+        addPlatform(700, 160);  // 5
+        addPlatform(900, 135);  // 6
+        addPlatform(1350, 155); // 7
+        addPlatform(1600, 130); // 8
+        addPlatform(1900, 155); // 9
+        addPlatform(2200, 140); // 10
 
         // ── Blocs style Mario ────────────────────────────────────────────────
         // Rangée 1 (x=80..128) : brique - champignon - brique - brique

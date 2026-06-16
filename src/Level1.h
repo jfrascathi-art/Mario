@@ -16,18 +16,18 @@ public:
         addGround(1320, 280);  // 3
         addGround(1750, 1250); // 4
 
-        addPlatform(160, 158, 65, 12, 0x5D4037);  // 5
-        addPlatform(280, 130, 55, 12, 0x5D4037);  // 6
-        addPlatform(510, 155, 70, 12, 0x5D4037);  // 7
-        addPlatform(700, 130, 60, 12, 0x5D4037);  // 8
-        addPlatform(820, 155, 60, 12, 0x5D4037);  // 9
-        addPlatform(1000, 130, 60, 12, 0x5D4037); // 10
-        addPlatform(1100, 155, 60, 12, 0x5D4037); // 11
-        addPlatform(1400, 130, 55, 12, 0x5D4037); // 12
-        addPlatform(1550, 155, 60, 12, 0x5D4037); // 13
-        addPlatform(1900, 140, 70, 12, 0x5D4037); // 14
-        addPlatform(2200, 125, 60, 12, 0x5D4037); // 15
-        addPlatform(2500, 150, 80, 12, 0x5D4037); // 16
+        addPlatform(160, 158);  // 5
+        addPlatform(280, 130);  // 6
+        addPlatform(510, 155);  // 7
+        addPlatform(700, 130);  // 8
+        addPlatform(820, 155);  // 9
+        addPlatform(1000, 130); // 10
+        addPlatform(1100, 155); // 11
+        addPlatform(1400, 130); // 12
+        addPlatform(1550, 155); // 13
+        addPlatform(1900, 140); // 14
+        addPlatform(2200, 125); // 15
+        addPlatform(2500, 150); // 16
 
         // Rangée 1 (x=80..128) : brique - champignon - brique - brique
         addBlock(80, 152, 0);
@@ -39,9 +39,13 @@ public:
         addBlock(620, 144, 2);
 
         // Rangée 2 : brique - mini - brique
-        addBlock(1150, 152, 0);
-        addBlock(1166, 152, 3);
-        addBlock(1182, 152, 0);
+        // BUG FIX : à x=1150 cette rangée finissait à cheval sur la plateforme 11
+        // (x=1100-1160/1164) → le joueur ne pouvait jamais sauter assez haut
+        // pour atteindre le dessous du bloc, bloqué par le dessous de la
+        // plateforme avant. Décalée à x=1340 (zone dégagée avant la plateforme 12).
+        addBlock(1340, 152, 0);
+        addBlock(1356, 152, 3);
+        addBlock(1372, 152, 0);
 
         // Bloc isolé : champignon
         addBlock(2050, 144, 1);

@@ -17,40 +17,49 @@ public:
         addGround(1430, 250);  // 4
         addGround(1840, 1360); // 5
 
-        addPlatform(100, 155, 45, 12, 0x212121); // 6
-        addPlatform(200, 125, 40, 12, 0x212121); // 7
-        addPlatform(375, 155, 45, 12, 0x212121); // 8
-        addPlatform(500, 130, 40, 12, 0x212121); // 9
-        addPlatform(615, 155, 40, 12, 0x212121); // 10
+        addPlatform(100, 155); // 6
+        addPlatform(200, 125); // 7
+        addPlatform(375, 155); // 8
+        addPlatform(500, 130); // 9
+        addPlatform(615, 155); // 10
 
         addCave(1100, 180, CAVE_COL); // 11
         addCave(1510, 170, CAVE_COL); // 12
         addCave(2000, 420, CAVE_COL); // 13
         addCave(2670, 280, CAVE_COL); // 14
 
-        addPlatform(1860, 150, 45, 12, 0x212121); // 15
-        addPlatform(2500, 130, 40, 12, 0x212121); // 16
-        addPlatform(3000, 145, 50, 12, 0x212121); // 17
+        addPlatform(1860, 150); // 15
+        addPlatform(2500, 130); // 16
+        addPlatform(3000, 145); // 17
 
         // Rangée dès le début - niveau expert, peu de blocs mais utiles
         addBlock(40, 152, 3); // mini, utile pour les grottes
         addBlock(56, 152, 1); // champignon
 
-        // Bloc isolé
+        // Bloc isolé (flotte au-dessus du trou 900-1040, à la manière d'un
+        // "pont" comme dans le vrai Mario : on saute en plein vol pour
+        // l'attraper avant de continuer sa course)
         addBlock(950, 144, 2); // fleur de feu
 
         // Rangée finale
-        addBlock(1900, 152, 0);
-        addBlock(1916, 152, 2); // fleur de feu
-        addBlock(1932, 152, 0);
+        // BUG FIX (cohérent avec le même bug trouvé dans Level1/Level2/Level3) :
+        // à x=1900 le premier bloc de cette rangée chevauchait la plateforme 15
+        // (x=1860-1905/1924, y=150-162). Toute la rangée décalée à x=1940,
+        // juste après la plateforme, avant que la grotte 13 ne commence (2000).
+        addBlock(1940, 152, 0);
+        addBlock(1956, 152, 2); // fleur de feu
+        addBlock(1972, 152, 0);
 
         flagX = 3100.0f;
 
         addGoomba(150, GROUND_Y, 10, 245);
         addGoomba(430, GROUND_Y, 375, 565);
         addGoomba(2100, GROUND_Y, 1845, 2290);
-        addGoombaOnPlatform(0, 105);
-        addGoombaOnPlatform(2, 380);
+        // BUG FIX : mêmes index erronés que dans Level3 (0 et 2 = segments de
+        // sol, pas plateformes). startX (105 et 380) correspond en réalité
+        // aux plateformes 6 et 8 (x=100 et x=375).
+        addGoombaOnPlatform(6, 105);
+        addGoombaOnPlatform(8, 380);
 
         createGoombaSprites(scr);
     }

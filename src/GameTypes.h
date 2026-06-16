@@ -19,6 +19,30 @@
 #define CAVE_COL3 0x3E2723
 #define CAVE_COL4 0x212121
 
+// ── Plateformes flottantes : taille et couleur UNIQUES pour tous les niveaux ──
+// Avant, chaque Level*.h fixait sa propre largeur (40 à 80px) et sa propre
+// couleur (bois marron, ou gris/noir "thème grotte/expert" pour Level3/Level4).
+// Résultat : aspect incohérent + largeurs façonnées au pif → des blocs ?
+// finissaient embarqués DANS une plateforme (cf. bugs corrigés dans Level1-4).
+// Maintenant : une seule taille/couleur, partagée par addPlatform(x,y) dans
+// Level.h. Le sol (addGround) et les grottes (addCave) ne sont PAS concernés
+// par cette uniformisation : leur largeur dépend forcément du niveau (combler
+// l'espace entre deux trous), seule la couleur du sol est elle aussi unifiée
+// ci-dessous.
+#define PLATFORM_W 64.0f
+#define PLATFORM_H 12.0f
+#define PLATFORM_COLOR 0xA0703A
+
+// ── Sol "vrai Mario" : bande d'herbe verte sur de la terre brune ──────────────
+// Le sol brique brun-orangé "façon SMB1" a été remplacé par une coupe
+// herbe/terre (comme dans Super Mario World / New Super Mario Bros / Super
+// Mario Maker, le style le plus universellement associé au "sol de Mario").
+// GRASS_CAP_H : épaisseur de la fine bande d'herbe dessinée par-dessus chaque
+// segment de sol (dans main.cpp), PAS sur les plateformes flottantes.
+#define GROUND_DIRT_COLOR 0x8B5A2B
+#define GROUND_GRASS_COLOR 0x4CAF50
+#define GRASS_CAP_H 6
+
 #define MAX_PLATFORMS 32
 #define MAX_GOOMBAS 12
 #define GOOMBA_W 14.0f

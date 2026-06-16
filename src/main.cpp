@@ -167,6 +167,11 @@ int fireTimer = 0; // frames restantes effet fleur de feu
 bool fireCooldown = false;
 
 static lv_obj_t *platObjs[MAX_PLATFORMS] = {};
+// Bande d'herbe verte posée SUR chaque segment de sol (un cap par segment,
+// jamais sur les plateformes flottantes ni au-dessus des trous). Remplace
+// l'ancienne unique bande "objGrass" qui couvrait TOUT le monde d'un bloc,
+// y compris par-dessus les trous où il n'y a pourtant aucun sol.
+static lv_obj_t *grassCapObjs[MAX_PLATFORMS] = {};
 static lv_obj_t *objFlagPole = nullptr;
 static lv_obj_t *objFlagTop = nullptr;
 #define FLAG_POLE_W 6
@@ -833,17 +838,15 @@ static void startBtnCb(lv_event_t *e)
   showGame();
 }
 
-// Palette rapprochée du vrai Super Mario Bros (NES) :
-// ciel bleu plus saturé, sol brique brun-orangé (le vrai jeu n'a PAS de
-// bande d'herbe verte sur le sol, juste des blocs brique/terre).
+// Palette : ciel bleu saturé façon NES, sol "herbe verte sur terre brune"
+// façon Super Mario World / New Super Mario Bros (GROUND_DIRT_COLOR et
+// GROUND_GRASS_COLOR sont définis dans GameTypes.h, partagés avec Level.h).
 #define SKY_COLOR 0x5C94FC
-#define GROUND_COLOR 0xB06A35
-#define GRASS_COLOR 0xD98C4A
 #define GOOMBA_HAT_COL 0x4E342E
 #define GOOMBA_BODY_COL 0x795548
 #define GOOMBA_FEET_COL 0xD9B98C
 
-static lv_obj_t *objSky = nullptr, *objGround = nullptr, *objGrass = nullptr;
+static lv_obj_t *objSky = nullptr, *objGround = nullptr;
 static lv_obj_t *objPlayer = nullptr, *objHead = nullptr;
 static lv_obj_t *lblScore = nullptr, *lblLives = nullptr, *lblLevel = nullptr, *lblDebug = nullptr;
 static lv_obj_t *spHat = nullptr, *spHatTop = nullptr, *spHatBrim = nullptr;
@@ -904,7 +907,6 @@ void createGoombaSprites(lv_obj_t *scr)
 void triggerGameOver()
 {
   objGround = nullptr;
-  objGrass = nullptr;
   objPlayer = nullptr;
   objHead = nullptr;
   lblScore = nullptr;
@@ -931,7 +933,10 @@ void triggerGameOver()
   objFlagPole = nullptr;
   objFlagTop = nullptr;
   for (int i = 0; i < MAX_PLATFORMS; i++)
+  {
     platObjs[i] = nullptr;
+    grassCapObjs[i] = nullptr;
+  }
   platformCount = 0;
   for (int j = 0; j < MAX_GOOMBAS; j++)
   {
@@ -982,7 +987,6 @@ void nextLevel()
   }
   currentLevel++;
   objGround = nullptr;
-  objGrass = nullptr;
   objPlayer = nullptr;
   objHead = nullptr;
   lblScore = nullptr;
@@ -1009,7 +1013,10 @@ void nextLevel()
   objFlagPole = nullptr;
   objFlagTop = nullptr;
   for (int i = 0; i < MAX_PLATFORMS; i++)
+  {
     platObjs[i] = nullptr;
+    grassCapObjs[i] = nullptr;
+  }
   platformCount = 0;
   for (int j = 0; j < MAX_GOOMBAS; j++)
   {
@@ -1194,7 +1201,6 @@ void initGameObjects(lv_obj_t *scr)
   lv_obj_set_style_pad_all(scr, 0, 0);
   lv_obj_set_style_border_width(scr, 0, 0);
   objGround = nullptr;
-  objGrass = makeRect(scr, 0, GROUND_VISUAL_Y, WORLD_W, 4, GRASS_COLOR);
   lblScore = makeHudLabel(scr, 8, 4, 160);
   lv_label_set_text(lblScore, "Score: 000000");
   lblLives = makeHudLabel(scr, 210, 4, 60);
@@ -1218,6 +1224,24 @@ void initGameObjects(lv_obj_t *scr)
     platObjs[i] = makeRect(scr,
                            (int)(platforms[i].x - cameraX), (int)(platforms[i].y),
                            (int)platforms[i].w, (int)platforms[i].h, platforms[i].color);
+
+  // ── Bande d'herbe verte sur chaque segment de SOL uniquement ──────────────
+  // Un cap par segment (jamais sur les plateformes flottantes ni les
+  // grottes), et seulement là où il y a vraiment du sol : contrairement à
+  // l'ancienne bande unique sur toute la largeur du monde, ça ne dessine
+  // jamais d'herbe flottant au-dessus d'un trou.
+  // !isCave && y==GROUND_Y : seule façon de reconnaître "ceci est un segment
+  // de sol" sans ajouter de champ dédié à Platform (addGround est le seul
+  // appel qui pose y=GROUND_Y, ni addPlatform ni addCave ne l'utilisent).
+  for (int i = 0; i < platformCount; i++)
+  {
+    if (!platforms[i].isCave && platforms[i].y == GROUND_Y)
+      grassCapObjs[i] = makeRect(scr,
+                                 (int)(platforms[i].x - cameraX), GROUND_VISUAL_Y,
+                                 (int)platforms[i].w, GRASS_CAP_H, GROUND_GRASS_COLOR);
+    else
+      grassCapObjs[i] = nullptr;
+  }
 
   // ── Crée les sprites LVGL des blocs ─────────────────────────────────────
   // Type 0 = brique décorative (couleur brique, pas de "?")
@@ -1352,11 +1376,13 @@ void renderGame()
   snprintf(buf, sizeof(buf), "x:%.0f y:%.0f", player.x, player.y);
   lv_label_set_text(lblDebug, buf);
 
-  if (objGrass)
-    lv_obj_set_pos(objGrass, (int)(-cameraX), GROUND_VISUAL_Y);
   for (int i = 0; i < platformCount; i++)
+  {
     if (platObjs[i])
       lv_obj_set_pos(platObjs[i], (int)(platforms[i].x - cameraX), (int)(platforms[i].y));
+    if (grassCapObjs[i])
+      lv_obj_set_pos(grassCapObjs[i], (int)(platforms[i].x - cameraX), GROUND_VISUAL_Y);
+  }
 
   // Repositionne les blocs et leur label "?"
   for (int i = 0; i < blockCount; i++)
@@ -1405,7 +1431,6 @@ void showGame()
   cameraX = 0.0f;
   objSky = nullptr;
   objGround = nullptr;
-  objGrass = nullptr;
   objPlayer = nullptr;
   objHead = nullptr;
   lblScore = nullptr;
@@ -1432,7 +1457,10 @@ void showGame()
   objFlagPole = nullptr;
   objFlagTop = nullptr;
   for (int i = 0; i < MAX_PLATFORMS; i++)
+  {
     platObjs[i] = nullptr;
+    grassCapObjs[i] = nullptr;
+  }
   platformCount = 0;
   for (int i = 0; i < MAX_GOOMBAS; i++)
   {

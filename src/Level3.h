@@ -16,22 +16,30 @@ public:
         addGround(1190, 260);  // 3
         addGround(1600, 1500); // 4
 
-        addPlatform(130, 155, 55, 12, 0x4E342E);  // 5
-        addPlatform(240, 125, 50, 12, 0x4E342E);  // 6
-        addPlatform(435, 155, 55, 12, 0x4E342E);  // 7
-        addPlatform(580, 130, 50, 12, 0x4E342E);  // 8
-        addPlatform(700, 155, 50, 12, 0x4E342E);  // 9
-        addPlatform(870, 130, 50, 12, 0x4E342E);  // 10
-        addPlatform(1010, 155, 50, 12, 0x4E342E); // 11
+        addPlatform(130, 155);  // 5
+        addPlatform(240, 125);  // 6
+        addPlatform(435, 155);  // 7
+        addPlatform(580, 130);  // 8
+        addPlatform(700, 155);  // 9
+        addPlatform(870, 130);  // 10
+        addPlatform(1010, 155); // 11
 
-        addCave(1300, 260, CAVE_COL); // 12
+        // BUG FIX (photo envoyée par l'utilisateur) : cette grotte était à
+        // x=1300, largeur 260 (donc jusqu'à x=1560). Le sol s'arrête à x=1450
+        // (trou de 1450 à 1600) : les derniers 110px du mur de grotte
+        // surplombaient donc le vide, sans aucun sol dessous. Le joueur qui
+        // se baissait/rétrécissait pour passer sous la grotte tombait dans le
+        // trou au lieu d'arriver sur la terre ferme. Repositionnée et
+        // réduite à x=1250, largeur 200 (jusqu'à x=1450 exactement) : elle
+        // tient maintenant entièrement sur le segment de sol [1190,1450].
+        addCave(1250, 200, CAVE_COL); // 12
         addCave(1750, 350, CAVE_COL); // 13
         addCave(2400, 300, CAVE_COL); // 14
 
-        addPlatform(1620, 145, 50, 12, 0x4E342E); // 15
-        addPlatform(2200, 130, 50, 12, 0x4E342E); // 16
-        addPlatform(2750, 140, 55, 12, 0x4E342E); // 17
-        addPlatform(2900, 120, 50, 12, 0x4E342E); // 18
+        addPlatform(1650, 145); // 15
+        addPlatform(2200, 130); // 16
+        addPlatform(2750, 140); // 17
+        addPlatform(2900, 120); // 18
 
         // Rangée dès le début
         addBlock(60, 152, 1); // champignon
@@ -41,21 +49,41 @@ public:
         // Bloc isolé avant 2ème trou
         addBlock(660, 144, 2); // fleur de feu
 
-        // Rangée entre grottes 1 et 2
-        addBlock(1660, 144, 0);
-        addBlock(1676, 144, 1); // champignon
-        addBlock(1692, 144, 0);
+        // Rangée brique-champignon-brique, entre la 1ère grotte (repositionnée
+        // ci-dessus) et la 2ème.
+        // BUG FIX (photo envoyée par l'utilisateur, "deux plateformes l'une
+        // dans l'autre") : à x=1660 cette rangée chevauchait la plateforme 15
+        // (x=1620-1670/1684, y=145-157) : le premier bloc de la rangée était
+        // en fait à moitié fondu dans la plateforme. Rangée décalée à
+        // x=1195 (juste après l'atterrissage du trou précédent, avant que la
+        // grotte 12 ne commence) ; plateforme 15 décalée à x=1650 (dans le
+        // segment de sol qui suit le trou, avant la grotte 13).
+        addBlock(1195, 144, 0);
+        addBlock(1211, 144, 1); // champignon
+        addBlock(1227, 144, 0);
 
-        // Bloc isolé
-        addBlock(2550, 136, 2);
+        // BUG FIX : ce bloc isolé était à x=2550, EN PLEIN MILIEU du mur de
+        // la grotte 14 (x=2400-2700, solide de y=0 à y=178) : totalement
+        // enfermé dans la pierre, impossible à atteindre par le joueur quel
+        // que soit le côté d'approche. Déplacé à x=2715, juste après la
+        // sortie de la grotte.
+        addBlock(2715, 144, 2);
 
         flagX = 2980.0f;
 
         addGoomba(180, GROUND_Y, 10, 295);
         addGoomba(480, GROUND_Y, 425, 665);
         addGoomba(2050, GROUND_Y, 1905, 2290);
-        addGoombaOnPlatform(0, 135);
-        addGoombaOnPlatform(2, 440);
+        // BUG FIX : ces deux appels référençaient les index 0 et 2, qui sont
+        // des segments de SOL (addGround), pas des plateformes flottantes.
+        // Le code fonctionnait quand même (un Goomba patrouillait sur tout le
+        // segment de sol), mais créait un second Goomba redondant qui se
+        // chevauchait presque entièrement avec un Goomba déjà posé au sol
+        // juste au-dessus. Le startX donné (135 et 440) correspond en réalité
+        // aux plateformes 5 et 7 (x=130 et x=435) : indices corrigés pour que
+        // ces Goombas patrouillent bien sur leur plateforme flottante prévue.
+        addGoombaOnPlatform(5, 135);
+        addGoombaOnPlatform(7, 440);
 
         createGoombaSprites(scr);
     }
