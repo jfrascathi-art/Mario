@@ -9,6 +9,7 @@ public:
         platformCount = 0;
         goombaCount = 0;
         blockCount = 0;
+        pipeCount = 0;
 
         addGround(0, 250);     // 0
         addGround(370, 200);   // 1
@@ -30,7 +31,25 @@ public:
 
         addPlatform(1860, 150); // 15
         addPlatform(2500, 130); // 16
-        addPlatform(3000, 145); // 17
+        // BUG FIX (lié au nouvel escalier final) : cette plateforme était à
+        // x=3000 (donc jusqu'à x=3144), pile sur la zone du nouvel escalier
+        // (x=3010-3090, voir plus bas) et du mât (x=3100). Déplacée à
+        // x=2580 : juste après la plateforme 16 (x=2500-2564, 16px d'écart)
+        // et bien avant la grotte 14 (x=2670, 26px d'écart) — un emplacement
+        // resté inoccupé jusqu'ici.
+        addPlatform(2580, 145); // 17
+
+        // ── Tubes et escalier ────────────────────────────────────────────────
+        // Tube-obstacle dans le segment de sol 3, seul espace dégagé avant
+        // que la grotte 11 n'occupe presque tout le reste du segment.
+        addPipe(1044, 32);
+        // Tube WARP, dans l'espace dégagé entre la fin de la grotte 13 et le
+        // début de la plateforme 16. Descendre dedans saute par-dessus la
+        // grotte 14 et atterrit juste après sa sortie (x=2980), juste avant
+        // l'escalier final.
+        addPipe(2428, 48, true, 2980);
+        // Escalier final, juste avant le mât.
+        addStaircase(3010, 5);
 
         // Rangée dès le début - niveau expert, peu de blocs mais utiles
         addBlock(40, 152, 3); // mini, utile pour les grottes
@@ -50,6 +69,7 @@ public:
         addBlock(1956, 152, 2); // fleur de feu
         addBlock(1972, 152, 0);
 
+        // Inchangé : l'escalier se termine à x=3090, 10px avant le mât.
         flagX = 3100.0f;
 
         addGoomba(150, GROUND_Y, 10, 245);

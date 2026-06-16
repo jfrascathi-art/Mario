@@ -9,6 +9,7 @@ public:
         platformCount = 0;
         goombaCount = 0;
         blockCount = 0;
+        pipeCount = 0;
 
         addGround(0, 300);     // 0
         addGround(420, 260);   // 1
@@ -39,7 +40,24 @@ public:
         addPlatform(1650, 145); // 15
         addPlatform(2200, 130); // 16
         addPlatform(2750, 140); // 17
-        addPlatform(2900, 120); // 18
+        // SUPPRIMÉE : addPlatform(2900, 120); // 18
+        // Cette plateforme décorative (x=2900-3020) chevauchait pile la zone
+        // du nouvel escalier final (x=2890-2970, voir plus bas). Comme elle
+        // n'est référencée par aucun bloc ni Goomba, la retirer est plus
+        // simple et plus sûr que la déplacer (et libère justement la zone où
+        // est posé le tube WARP ci-dessous).
+
+        // ── Tubes et escalier ────────────────────────────────────────────────
+        // Tube-obstacle dans le segment de sol 2, entre les plateformes 10 et 11.
+        addPipe(955, 32);
+        // Tube WARP, dans l'espace dégagé entre la fin de la patrouille du
+        // Goomba (x=2290) et le début de la grotte 14 (x=2400). Descendre
+        // dedans saute par-dessus toute la grotte et atterrit juste après
+        // sa sortie (x=2720).
+        addPipe(2330, 48, true, 2720);
+        // Escalier final, juste avant le mât (zone libérée par la
+        // suppression de l'ancienne plateforme 18 ci-dessus).
+        addStaircase(2890, 5);
 
         // Rangée dès le début
         addBlock(60, 152, 1); // champignon
@@ -69,6 +87,7 @@ public:
         // sortie de la grotte.
         addBlock(2715, 144, 2);
 
+        // Inchangé : l'escalier se termine à x=2970, 10px avant le mât.
         flagX = 2980.0f;
 
         addGoomba(180, GROUND_Y, 10, 295);

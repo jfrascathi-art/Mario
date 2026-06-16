@@ -16,6 +16,7 @@ public:
         platformCount = 0;
         goombaCount = 0;
         blockCount = 0;
+        pipeCount = 0;
 
         // ── Sol ───────────────────────────────────────────────────────────────
         addGround(0, 500);     // 0
@@ -31,6 +32,19 @@ public:
         addPlatform(1600, 130); // 8
         addPlatform(1900, 155); // 9
         addPlatform(2200, 140); // 10
+
+        // ── Tubes et escalier ────────────────────────────────────────────────
+        // Tube-obstacle (juste un obstacle à enjamber, pas de symbole "▼") :
+        // posé dans le grand espace dégagé entre la plateforme 9 (1900-1964)
+        // et la plateforme 10 (2200-2264).
+        addPipe(2050, 32);
+        // Tube WARP : posé après la plateforme 10, avant l'escalier final.
+        // Descendre dedans (joystick bas) téléporte 350px plus loin, juste
+        // devant l'escalier — un petit raccourci comme dans le vrai jeu.
+        addPipe(2350, 48, true, 2700);
+        // Escalier final façon "Hard Blocks" de la fin du niveau 1-1 : 5
+        // marches de 16px, de 16 à 80px de haut, juste avant le mât.
+        addStaircase(2760, 5);
 
         // ── Blocs style Mario ────────────────────────────────────────────────
         // Rangée 1 (x=80..128) : brique - champignon - brique - brique
@@ -52,6 +66,8 @@ public:
         addBlock(1500, 144, 1);
 
         // ── Drapeau ───────────────────────────────────────────────────────────
+        // Inchangé : l'escalier (qui se termine à x=2840) laisse exactement
+        // 10px avant le mât, comme dans le vrai jeu.
         flagX = 2850.0f;
 
         // ── Goombas ───────────────────────────────────────────────────────────

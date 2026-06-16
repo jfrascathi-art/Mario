@@ -20,25 +20,11 @@
 #define CAVE_COL4 0x212121
 
 // ── Plateformes flottantes : taille et couleur UNIQUES pour tous les niveaux ──
-// Avant, chaque Level*.h fixait sa propre largeur (40 à 80px) et sa propre
-// couleur (bois marron, ou gris/noir "thème grotte/expert" pour Level3/Level4).
-// Résultat : aspect incohérent + largeurs façonnées au pif → des blocs ?
-// finissaient embarqués DANS une plateforme (cf. bugs corrigés dans Level1-4).
-// Maintenant : une seule taille/couleur, partagée par addPlatform(x,y) dans
-// Level.h. Le sol (addGround) et les grottes (addCave) ne sont PAS concernés
-// par cette uniformisation : leur largeur dépend forcément du niveau (combler
-// l'espace entre deux trous), seule la couleur du sol est elle aussi unifiée
-// ci-dessous.
 #define PLATFORM_W 64.0f
 #define PLATFORM_H 12.0f
 #define PLATFORM_COLOR 0xA0703A
 
 // ── Sol "vrai Mario" : bande d'herbe verte sur de la terre brune ──────────────
-// Le sol brique brun-orangé "façon SMB1" a été remplacé par une coupe
-// herbe/terre (comme dans Super Mario World / New Super Mario Bros / Super
-// Mario Maker, le style le plus universellement associé au "sol de Mario").
-// GRASS_CAP_H : épaisseur de la fine bande d'herbe dessinée par-dessus chaque
-// segment de sol (dans main.cpp), PAS sur les plateformes flottantes.
 #define GROUND_DIRT_COLOR 0x8B5A2B
 #define GROUND_GRASS_COLOR 0x4CAF50
 #define GRASS_CAP_H 6
@@ -50,22 +36,51 @@
 #define GOOMBA_SPEED 1.2f
 
 // ── Power-ups ─────────────────────────────────────────────────────────────────
-// MAX_BLOCKS : nombre max de blocs ? par niveau
-// MAX_ITEMS  : items qui tombent du bloc après qu'on le frappe
-// MAX_FIREBALLS : boules de feu simultanées à l'écran
 #define MAX_BLOCKS 16
 #define MAX_ITEMS 4
 #define MAX_FIREBALLS 4
 
-// Durée de l'effet fleur de feu en frames (25fps × 5s = 125 frames)
-#define FIRE_DURATION 125
+// ── Durée de TOUS les power-ups, en frames ────────────────────────────────────
+// Le jeu tourne dans myTask() avec vTaskDelayUntil(..., pdMS_TO_TICKS(40)) :
+// une frame toutes les 40 ms → 1000/40 = 25 frames par seconde (25 fps).
+// Pour obtenir 5 secondes de power-up, il faut donc :
+//     durée_frames = durée_secondes × fps = 5 × 25 = 125
+// Avant, seule la fleur de feu avait un timer (FIRE_DURATION). Le champignon
+// et le mini-champignon ne s'arrêtaient JAMAIS tout seuls (uniquement en
+// touchant un Goomba). POWERUP_DURATION est maintenant utilisé pour les
+// TROIS power-ups, dans powerUpTimer (voir main.cpp).
+#define POWERUP_DURATION 125
+
+// ── Tubes (pipes) ─────────────────────────────────────────────────────────────
+// Un tube est dessiné avec deux rectangles pleins :
+//   - le CHAPEAU (cap)  : plus large que le corps, fine bande en haut (8px)
+//   - le CORPS   (body) : la partie qui descend jusqu'au sol
+// PIPE_OVERHANG = débord du chapeau de chaque côté par rapport au corps
+// (juste un effet de style avec nos rectangles plats, pour qu'on reconnaisse
+// un tube au premier coup d'œil — dans le vrai jeu le "rebord" est juste un
+// motif dessiné dans la même largeur de 32px, mais on n'a pas de sprite ici).
+#define MAX_PIPES 8
+#define PIPE_BODY_W 24.0f
+#define PIPE_CAP_H 8.0f
+#define PIPE_OVERHANG 4.0f
+#define PIPE_BODY_COLOR 0x3C9D40
+#define PIPE_CAP_COLOR 0x2D6A30
+
+// ── Escaliers ──────────────────────────────────────────────────────────────
+#define STAIR_BLOCK_COLOR 0x787878
 
 // ── Structs plateforme et ennemi ──────────────────────────────────────────────
 struct Platform
 {
     float x, y, w, h;
     uint32_t color;
-    bool isCave;
+    // solid = collision PLEINE (dessus + dessous + les DEUX côtés), comme un
+    // mur. Avant, ce champ s'appelait "isCave" car seul addCave() s'en
+    // servait. Il sert maintenant aussi aux marches d'escalier et aux tubes,
+    // qui ont besoin exactement du même comportement : impossible de les
+    // traverser par le côté, contrairement aux plateformes flottantes
+    // classiques qui ne bloquent que par le dessus/dessous.
+    bool solid;
 };
 
 struct Goomba
@@ -77,37 +92,43 @@ struct Goomba
 };
 
 // ── Bloc ? ────────────────────────────────────────────────────────────────────
-// Un bloc ? est un bloc en l'air que le joueur frappe par en-dessous.
-// Quand il est frappé (hit=true), un item apparaît au-dessus.
-// powerUpType : 1=champignon, 2=fleur de feu, 3=mini
 struct Block
 {
-    float x, y;      // coin haut-gauche dans le monde
-    int powerUpType; // type d'item qu'il contient (0=brique déco, 1/2/3=power-up)
-    bool hit;        // true = déjà frappé (bloc vide, couleur grise)
-    lv_obj_t *obj;   // rectangle LVGL du bloc
-    lv_obj_t *mark;  // label "?" affiché par-dessus (nullptr si type 0)
+    float x, y;
+    int powerUpType;
+    bool hit;
+    lv_obj_t *obj;
+    lv_obj_t *mark;
 };
 
-// ── Item au sol (item qui tombe du bloc et attend d'être ramassé) ─────────────
-// L'item apparaît au-dessus du bloc, tombe sur le sol, et attend le joueur.
-// active=true tant qu'il n'a pas été ramassé.
+// ── Item au sol ───────────────────────────────────────────────────────────────
 struct Item
 {
-    float x, y, velY; // position + vitesse verticale (item tombe)
-    int type;         // 1=champignon, 2=fleur de feu, 3=mini
+    float x, y, velY;
+    int type;
     bool active;
     bool onGround;
     lv_obj_t *obj;
 };
 
 // ── Boule de feu ──────────────────────────────────────────────────────────────
-// Tirée par le joueur avec joystick haut + bouton DOWN.
-// Vole horizontalement (direction du joueur), détruites en touchant un Goomba
-// ou en sortant de l'écran.
 struct FireBall
 {
     float x, y, velX;
     bool active;
     lv_obj_t *obj;
+};
+
+// ── Tube ──────────────────────────────────────────────────────────────────────
+// Un Pipe ne porte PAS la collision lui-même : sa collision est déjà assurée
+// par les deux Platform "solid" (chapeau + corps) créées par addPipe() dans
+// Level.h. Cette struct sert uniquement à repérer "le joueur est-il debout
+// SUR ce tube précis" pour déclencher la descente.
+struct Pipe
+{
+    float x, w;     // emprise horizontale du CHAPEAU (zone où on peut se tenir)
+    float topY;     // altitude (y) du dessus du chapeau
+    bool warp;      // true = on peut descendre dedans (joystick bas)
+    float exitX;    // position d'arrivée dans le niveau si warp == true
+    lv_obj_t *mark; // petite flèche "▼" au-dessus des tubes descendables (nullptr sinon)
 };

@@ -9,6 +9,7 @@ public:
         platformCount = 0;
         goombaCount = 0;
         blockCount = 0;
+        pipeCount = 0;
 
         addGround(0, 350);     // 0
         addGround(470, 310);   // 1
@@ -28,6 +29,17 @@ public:
         addPlatform(1900, 140); // 14
         addPlatform(2200, 125); // 15
         addPlatform(2500, 150); // 16
+
+        // ── Tubes et escalier ────────────────────────────────────────────────
+        // Tube-obstacle posé dans le segment de sol 2 (910-1180), bien à
+        // l'écart des plateformes 10/11 qui flottent plus loin (x>=1000).
+        addPipe(950, 32);
+        // Tube WARP, posé dans l'espace dégagé du segment 3 juste avant la
+        // plateforme 13. Descendre dedans saute par-dessus la patrouille du
+        // Goomba du segment 4 et atterrit juste après elle (x=2150).
+        addPipe(1495, 48, true, 2150);
+        // Escalier final, juste avant le mât.
+        addStaircase(2810, 5);
 
         // Rangée 1 (x=80..128) : brique - champignon - brique - brique
         addBlock(80, 152, 0);
@@ -50,6 +62,7 @@ public:
         // Bloc isolé : champignon
         addBlock(2050, 144, 1);
 
+        // Inchangé : l'escalier se termine à x=2890, 10px avant le mât.
         flagX = 2900.0f;
 
         addGoomba(180, GROUND_Y, 10, 345);

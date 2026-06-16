@@ -163,8 +163,33 @@ Item items[MAX_ITEMS];
 int itemCount = 0;
 FireBall fireballs[MAX_FIREBALLS];
 int fireballCount = 0;
-int fireTimer = 0; // frames restantes effet fleur de feu
+// powerUpTimer : frames restantes du power-up ACTUELLEMENT actif, quel qu'il
+// soit (avant, seule la fleur de feu avait un timer — voir POWERUP_DURATION
+// dans GameTypes.h pour le calcul des 125 frames = 5s).
+int powerUpTimer = 0;
 bool fireCooldown = false;
+// joyUpBufferFrames : mémorise pendant quelques frames qu'on a récemment
+// poussé le joystick vers le HAUT, pour tolérer un léger décalage avec
+// l'appui du bouton accroupi (voir le tir de boules de feu plus bas). Sans
+// ça, "joystick haut" ET "bouton appuyé" doivent être vrais EXACTEMENT à la
+// même frame de 40ms, ce qui est physiquement difficile à viser à la main.
+int joyUpBufferFrames = 0;
+
+// ── Tubes ────────────────────────────────────────────────────────────────────
+Pipe pipes[MAX_PIPES];
+int pipeCount = 0;
+// pipeWarpTimer : tant que > 0, une transition "descente dans un tube" est en
+// cours : on saute toute la physique normale (voir le tout début de
+// updateGame()) pour jouer une petite animation scriptée, puis on téléporte
+// le joueur à pipeWarpExitX.
+int pipeWarpTimer = 0;
+float pipeWarpExitX = 0.0f;
+// Courte invincibilité après une téléportation, pour ne pas redéclencher
+// instantanément un second warp si le point d'arrivée est lui-même au-dessus
+// d'un tube (même idée que player.hitCooldown pour les Goombas).
+int pipeWarpCooldown = 0;
+#define PIPE_WARP_DURATION 15 // ~0.6s @25fps
+#define PIPE_WARP_SINK_SPEED 1.0f
 
 static lv_obj_t *platObjs[MAX_PLATFORMS] = {};
 // Bande d'herbe verte posée SUR chaque segment de sol (un cap par segment,
@@ -244,6 +269,37 @@ void saveCurrentGame()
 
 void updateGame(InputState &in)
 {
+  // ── TRANSITION "DESCENTE DANS UN TUBE" ─────────────────────────────────────
+  // Tant que pipeWarpTimer > 0, on est en train de jouer l'animation
+  // scriptée : le joueur s'enfonce dans le tube, immobile, sans aucune des
+  // règles normales (gravité, collisions, saut...). On isole complètement ce
+  // bloc du reste de la physique avec un `return` immédiat : c'est le moyen
+  // le plus sûr de ne RIEN casser dans le code déjà existant en dessous.
+  if (pipeWarpTimer > 0)
+  {
+    pipeWarpTimer--;
+    player.y += PIPE_WARP_SINK_SPEED; // s'enfonce lentement
+    player.velX = 0.0f;
+    player.velY = 0.0f;
+    if (pipeWarpTimer == 0)
+    {
+      player.x = pipeWarpExitX;
+      player.y = GROUND_Y;
+      player.onGround = true;
+      pipeWarpCooldown = PIPE_WARP_DURATION;
+      // Recentre la caméra D'UN COUP sur la nouvelle position (pas de
+      // panoramique progressif, sinon on voit défiler tout le niveau entre
+      // les deux points — l'effet "téléportation" doit être net).
+      float targetX = player.x - (float)SCREEN_W / 3.0f;
+      if (targetX < 0.0f)
+        targetX = 0.0f;
+      cameraX = targetX;
+    }
+    return;
+  }
+  if (pipeWarpCooldown > 0)
+    pipeWarpCooldown--;
+
   if (player.hitCooldown > 0)
     player.hitCooldown--;
   player.crouching = in.buttonDown && player.onGround;
@@ -302,7 +358,7 @@ void updateGame(InputState &in)
         player.velY = 0.0f;
       }
     }
-    if (p.isCave)
+    if (p.solid)
     {
       float py2n = player.y, py1n = player.y - PH_eff;
       bool overlapY = (py2n > ply1) && (py1n < ply2);
@@ -393,7 +449,12 @@ void updateGame(InputState &in)
       it.velY += 0.25f;
     it.y += it.velY;
 
-    // Atterrissage sur une dalle de sol (non-cave)
+    // Atterrissage sur une dalle de sol (pas sur un élément "solid" : grotte,
+    // tube ou marche d'escalier). Limitation connue : un item qui tomberait
+    // exactement au-dessus d'un tube ou d'une marche traverserait sans s'y
+    // poser (comme il le faisait déjà avec les grottes) — sans conséquence
+    // dans nos niveaux puisqu'aucun bloc ? n'est placé au-dessus d'un tube
+    // ou d'un escalier.
     if (!it.onGround)
     {
       float it_bot = it.y + 12;
@@ -401,7 +462,7 @@ void updateGame(InputState &in)
       for (int j = 0; j < platformCount; j++)
       {
         Platform &pp = platforms[j];
-        if (pp.isCave)
+        if (pp.solid)
           continue;
         if (it.x + 12 <= pp.x || it.x >= pp.x + pp.w)
           continue;
@@ -430,8 +491,10 @@ void updateGame(InputState &in)
     if (tX && tY)
     {
       player.powerUp = (PowerUp)it.type;
-      if (it.type == POWERUP_FIRE)
-        fireTimer = FIRE_DURATION;
+      // Avant : seule la fleur de feu obtenait un timer. Maintenant, TOUS
+      // les power-ups démarrent avec les mêmes 125 frames (5s) — voir le
+      // calcul détaillé dans GameTypes.h (POWERUP_DURATION).
+      powerUpTimer = POWERUP_DURATION;
       player.score += 50;
       it.active = false;
       if (it.obj)
@@ -440,21 +503,69 @@ void updateGame(InputState &in)
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FLEUR DE FEU : timer + tir + déplacement des boules
+  // POWER-UP : décompte du timer (commun aux 3 power-ups) + tir de boules de
+  // feu + déplacement des boules
   // ══════════════════════════════════════════════════════════════════════════
-  if (fireTimer > 0)
+  if (powerUpTimer > 0)
   {
-    fireTimer--;
-    if (fireTimer == 0)
-      player.powerUp = POWERUP_NONE;
+    powerUpTimer--;
+    if (powerUpTimer == 0)
+    {
+      // Cas particulier MINI → NORMAL : le joueur passe de 14px à 26px de
+      // haut, donc la tête monte de 12px. Si un obstacle solide (plateforme,
+      // grotte, tube, marche d'escalier) occupe cette bande de 12px
+      // juste au-dessus de la tête actuelle, le faire regrandir maintenant
+      // l'enfoncerait dans le décor. On repousse alors la fin de l'effet
+      // d'une frame (powerUpTimer=1 → re-testé la frame suivante) jusqu'à ce
+      // que la voie soit libre, exactement comme le vrai Mario ne peut pas
+      // sortir d'un passage bas tant qu'il n'en est pas dégagé.
+      bool blocked = false;
+      if (player.powerUp == POWERUP_MINI)
+      {
+        // PH_eff vaut ici 14.0f (taille MINI, calculée plus haut dans cette
+        // même frame puisque player.powerUp n'a pas encore changé) ; PH vaut
+        // 26.0f (taille normale). curHeadY/newHeadY = position de la tête
+        // AVANT/APRÈS le retour à la taille normale.
+        float curHeadY = player.y - PH_eff;
+        float newHeadY = player.y - PH;
+        for (int k = 0; k < platformCount; k++)
+        {
+          Platform &pp = platforms[k];
+          bool overlapX2 = (player.x + PW > pp.x) && (player.x < pp.x + pp.w);
+          bool overlapY2 = (pp.y + pp.h > newHeadY) && (pp.y < curHeadY);
+          if (overlapX2 && overlapY2)
+          {
+            blocked = true;
+            break;
+          }
+        }
+      }
+      if (blocked)
+        powerUpTimer = 1;
+      else
+        player.powerUp = POWERUP_NONE;
+    }
   }
 
-  // Tir : joystick HAUT + bouton DOWN, 1 tir par appui (cooldown)
-  if (!in.isUp() || !in.buttonDown)
+  // Tir : joystick HAUT + bouton accroupi, 1 tir par appui (cooldown).
+  // joyUpBufferFrames tolère un petit décalage entre les deux appuis (voir
+  // la déclaration en haut du fichier) : on se souvient d'un appui HAUT
+  // pendant ~240ms, donc presser le bouton juste après (ou juste avant)
+  // avoir poussé le manche suffit toujours à tirer.
+  if (in.isUp())
+    joyUpBufferFrames = 6;
+  else if (joyUpBufferFrames > 0)
+    joyUpBufferFrames--;
+
+  // Le cooldown ne se réinitialise plus que sur le RELÂCHEMENT du bouton :
+  // avant, il fallait aussi relâcher le manche, ce qui rendait les tirs
+  // répétés (garder le manche en haut, marteler le bouton) plus durs que
+  // nécessaire.
+  if (!in.buttonDown)
     fireCooldown = false;
 
-  if (player.powerUp == POWERUP_FIRE && fireTimer > 0 &&
-      in.isUp() && in.buttonDown && !fireCooldown)
+  if (player.powerUp == POWERUP_FIRE && powerUpTimer > 0 &&
+      joyUpBufferFrames > 0 && in.buttonDown && !fireCooldown)
   {
     fireCooldown = true;
     int fbSlot = -1;
@@ -517,6 +628,35 @@ void updateGame(InputState &in)
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // TUBES : le joueur est-il debout sur le CHAPEAU d'un tube descendable, et
+  // pousse-t-il le joystick vers le BAS ?
+  // ══════════════════════════════════════════════════════════════════════════
+  // Note : ceci utilise in.isDown() (la position du MANCHE), pas le bouton
+  // accroupi — bien différent du tir de boules de feu qui utilise lui le
+  // BOUTON. Les deux gestes ne doivent jamais se confondre : monter le
+  // manche + bouton = tirer ; manche vers le bas (seul) = descendre.
+  if (pipeWarpCooldown <= 0)
+  {
+    for (int i = 0; i < pipeCount; i++)
+    {
+      Pipe &pp = pipes[i];
+      if (!pp.warp)
+        continue;
+      float dy = player.y - pp.topY;
+      if (dy < 0.0f)
+        dy = -dy;
+      bool standingOnTop = player.onGround && dy < 0.6f &&
+                           (player.x + PW > pp.x) && (player.x < pp.x + pp.w);
+      if (standingOnTop && in.isDown())
+      {
+        pipeWarpTimer = PIPE_WARP_DURATION;
+        pipeWarpExitX = pp.exitX;
+        break;
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // DRAPEAU / CHUTE / GOOMBAS
   // ══════════════════════════════════════════════════════════════════════════
   float pcx = player.x + PW * 0.5f;
@@ -548,7 +688,7 @@ void updateGame(InputState &in)
     player.onGround = true;
     player.crouching = false;
     player.powerUp = POWERUP_NONE;
-    fireTimer = 0;
+    powerUpTimer = 0;
     cameraX = 0.0f;
   }
   if (player.x < 0.0f)
@@ -615,7 +755,7 @@ void updateGame(InputState &in)
           {
             // Power-up actif : le perdre au lieu d'une vie
             player.powerUp = POWERUP_NONE;
-            fireTimer = 0;
+            powerUpTimer = 0;
             player.velX = (player.x > goombas[i].x) ? 2.0f : -2.0f;
             player.velY = JUMP_VELOCITY * 0.4f;
             player.onGround = false;
@@ -957,8 +1097,12 @@ void triggerGameOver()
     items[k].obj = nullptr;
   itemCount = 0;
   fireballCount = 0;
-  fireTimer = 0;
+  powerUpTimer = 0;
   fireCooldown = false;
+  joyUpBufferFrames = 0;
+  pipeCount = 0;
+  pipeWarpTimer = 0;
+  pipeWarpCooldown = 0;
   player.powerUp = POWERUP_NONE;
   // BUG FIX : avant, ces 3 lignes remettaient TOUJOURS lives/score/niveau à
   // zéro, écrasant la sauvegarde que l'appelant venait de faire juste avant
@@ -1037,8 +1181,12 @@ void nextLevel()
     items[k].obj = nullptr;
   itemCount = 0;
   fireballCount = 0;
-  fireTimer = 0;
+  powerUpTimer = 0;
   fireCooldown = false;
+  joyUpBufferFrames = 0;
+  pipeCount = 0;
+  pipeWarpTimer = 0;
+  pipeWarpCooldown = 0;
   player.x = 50.0f;
   player.y = GROUND_Y;
   player.velX = 0.0f;
@@ -1226,16 +1374,18 @@ void initGameObjects(lv_obj_t *scr)
                            (int)platforms[i].w, (int)platforms[i].h, platforms[i].color);
 
   // ── Bande d'herbe verte sur chaque segment de SOL uniquement ──────────────
-  // Un cap par segment (jamais sur les plateformes flottantes ni les
-  // grottes), et seulement là où il y a vraiment du sol : contrairement à
-  // l'ancienne bande unique sur toute la largeur du monde, ça ne dessine
-  // jamais d'herbe flottant au-dessus d'un trou.
-  // !isCave && y==GROUND_Y : seule façon de reconnaître "ceci est un segment
+  // Un cap par segment (jamais sur les plateformes flottantes, grottes,
+  // tubes ou marches d'escalier), et seulement là où il y a vraiment du sol :
+  // contrairement à l'ancienne bande unique sur toute la largeur du monde,
+  // ça ne dessine jamais d'herbe flottant au-dessus d'un trou.
+  // !solid && y==GROUND_Y : seule façon de reconnaître "ceci est un segment
   // de sol" sans ajouter de champ dédié à Platform (addGround est le seul
-  // appel qui pose y=GROUND_Y, ni addPlatform ni addCave ne l'utilisent).
+  // appel qui pose y=GROUND_Y ; addCave/addStaircase/addPipe posent solid=
+  // true à une autre hauteur, addPlatform pose solid=false à une autre
+  // hauteur aussi).
   for (int i = 0; i < platformCount; i++)
   {
-    if (!platforms[i].isCave && platforms[i].y == GROUND_Y)
+    if (!platforms[i].solid && platforms[i].y == GROUND_Y)
       grassCapObjs[i] = makeRect(scr,
                                  (int)(platforms[i].x - cameraX), GROUND_VISUAL_Y,
                                  (int)platforms[i].w, GRASS_CAP_H, GROUND_GRASS_COLOR);
@@ -1266,6 +1416,27 @@ void initGameObjects(lv_obj_t *scr)
     {
       bl.mark = nullptr;
     }
+  }
+
+  // ── Marqueurs "▼" au-dessus des tubes descendables ────────────────────────
+  // Le tube lui-même n'a besoin d'AUCUN sprite dédié : il est déjà visible
+  // grâce aux deux Platform "solid" (chapeau + corps) créées par addPipe(),
+  // rendues comme n'importe quelle autre plateforme par la boucle juste
+  // au-dessus. Seuls les tubes WARP reçoivent ce petit indicateur en plus,
+  // pour que le joueur sache lequel accepte la descente (joystick bas).
+  for (int i = 0; i < pipeCount; i++)
+  {
+    if (!pipes[i].warp)
+    {
+      pipes[i].mark = nullptr;
+      continue;
+    }
+    pipes[i].mark = lv_label_create(scr);
+    lv_label_set_text(pipes[i].mark, LV_SYMBOL_DOWN);
+    lv_obj_set_style_text_color(pipes[i].mark, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_pos(pipes[i].mark,
+                   (int)(pipes[i].x + pipes[i].w / 2.0f - 6.0f - cameraX),
+                   (int)(pipes[i].topY) - 16);
   }
 
   // Drapeau
@@ -1367,9 +1538,19 @@ void renderGame()
   lv_label_set_text(lblScore, buf);
   snprintf(buf, sizeof(buf), "x%d", player.lives);
   lv_label_set_text(lblLives, buf);
-  // Affiche le timer fleur de feu dans le label niveau si actif
-  if (player.powerUp == POWERUP_FIRE && fireTimer > 0)
-    snprintf(buf, sizeof(buf), "Niv.%d [F%d]", currentLevel + 1, fireTimer / 25 + 1);
+  // Affiche le compte à rebours du power-up actif dans le label niveau, quel
+  // qu'il soit (avant : seule la fleur de feu avait droit à cet affichage).
+  // F = Feu, C = Champignon, P = Petit (mini). +1 pour arrondir au-dessus :
+  // à 26 frames restantes (juste après le passage sous le seuil des 25, donc
+  // au tout début de la 2e seconde), /25=1, +1=2 → on affiche encore "2"
+  // tant qu'il reste plus d'une seconde pleine, comme un compte à rebours
+  // normal (jamais "0" tant que l'effet est actif).
+  if (player.powerUp != POWERUP_NONE && powerUpTimer > 0)
+  {
+    char tag = (player.powerUp == POWERUP_FIRE) ? 'F' : (player.powerUp == POWERUP_MUSHROOM) ? 'C'
+                                                                                             : 'P';
+    snprintf(buf, sizeof(buf), "Niv.%d [%c%d]", currentLevel + 1, tag, powerUpTimer / 25 + 1);
+  }
   else
     snprintf(buf, sizeof(buf), "Niv.%d", currentLevel + 1);
   lv_label_set_text(lblLevel, buf);
@@ -1383,6 +1564,13 @@ void renderGame()
     if (grassCapObjs[i])
       lv_obj_set_pos(grassCapObjs[i], (int)(platforms[i].x - cameraX), GROUND_VISUAL_Y);
   }
+
+  // Repositionne les marqueurs "▼" des tubes warp
+  for (int i = 0; i < pipeCount; i++)
+    if (pipes[i].mark)
+      lv_obj_set_pos(pipes[i].mark,
+                     (int)(pipes[i].x + pipes[i].w / 2.0f - 6.0f - cameraX),
+                     (int)(pipes[i].topY) - 16);
 
   // Repositionne les blocs et leur label "?"
   for (int i = 0; i < blockCount; i++)
@@ -1481,8 +1669,14 @@ void showGame()
     items[k].obj = nullptr;
   itemCount = 0;
   fireballCount = 0;
-  fireTimer = 0;
+  powerUpTimer = 0;
   fireCooldown = false;
+  joyUpBufferFrames = 0;
+  for (int k = 0; k < MAX_PIPES; k++)
+    pipes[k].mark = nullptr;
+  pipeCount = 0;
+  pipeWarpTimer = 0;
+  pipeWarpCooldown = 0;
   initGameObjects(scr);
 }
 
