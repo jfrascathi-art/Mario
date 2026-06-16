@@ -134,6 +134,10 @@ struct Player
   bool onGround, isAlive, crouching;
   PowerUp powerUp;
   int lives, score, characterId;
+  // Frames d'invincibilité restantes après avoir touché un Goomba en perdant
+  // le power-up. Empêche un second contact (rebond trop lent) de retirer
+  // aussi une vie le coup suivant. Voir bug #2 dans updateGame().
+  int hitCooldown;
 };
 Player player;
 int currentLevel = 0, activeSaveSlot = 0;
@@ -151,6 +155,16 @@ int platformCount = 0;
 Goomba goombas[MAX_GOOMBAS];
 int goombaCount = 0;
 float flagX = 0.0f;
+
+// ── Power-ups : blocs ?, items, boules de feu ──────────────────────────────
+Block blocks[MAX_BLOCKS];
+int blockCount = 0;
+Item items[MAX_ITEMS];
+int itemCount = 0;
+FireBall fireballs[MAX_FIREBALLS];
+int fireballCount = 0;
+int fireTimer = 0; // frames restantes effet fleur de feu
+bool fireCooldown = false;
 
 static lv_obj_t *platObjs[MAX_PLATFORMS] = {};
 static lv_obj_t *objFlagPole = nullptr;
@@ -200,6 +214,7 @@ void loadSave(int idx)
   player.velY = 0.0f;
   player.onGround = true;
   player.crouching = false;
+  player.hitCooldown = 0;
 }
 
 void newGame(int idx, int charId)
@@ -224,6 +239,8 @@ void saveCurrentGame()
 
 void updateGame(InputState &in)
 {
+  if (player.hitCooldown > 0)
+    player.hitCooldown--;
   player.crouching = in.buttonDown && player.onGround;
   float speedMult = player.crouching ? 0.5f : 1.0f;
   player.velX = in.normalizedX() * WALK_SPEED * speedMult;
@@ -238,7 +255,23 @@ void updateGame(InputState &in)
 
   const float PW = 16.0f, PH = 26.0f;
   float py2_avant = player.y - player.velY;
-  float PH_eff = player.crouching ? 22.0f : PH;
+  // MINI : hauteur réduite à 14px → passe sous les grottes (CAVE_H=22)
+  // sans s'accroupir. MUSHROOM : hauteur augmentée à 34px.
+  float PH_eff;
+  if (player.crouching)
+    PH_eff = 22.0f;
+  else if (player.powerUp == POWERUP_MINI)
+    PH_eff = 14.0f;
+  else if (player.powerUp == POWERUP_MUSHROOM)
+    PH_eff = 34.0f;
+  else
+    PH_eff = PH;
+
+  // Réinitialiser onGround chaque frame : il sera remis à true uniquement
+  // si une collision verticale (sol/plateforme/bloc) est détectée plus bas.
+  // Sans ce reset, le joueur reste "au sol" même dans le vide, ce qui
+  // empêche les atterrissages corrects sur les plateformes suivantes.
+  player.onGround = false;
 
   for (int i = 0; i < platformCount; i++)
   {
@@ -285,6 +318,202 @@ void updateGame(InputState &in)
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // BLOCS ? : collision physique solide
+  // ══════════════════════════════════════════════════════════════════════════
+  // Un bloc est un solide 16×16 px. Deux comportements :
+  //   CAS A : le joueur ATTERRIT sur le dessus  → bloqué comme une plateforme
+  //   CAS B : il FRAPPE le dessous en montant   → déclenche l'item (si !hit)
+  for (int i = 0; i < blockCount; i++)
+  {
+    Block &bl = blocks[i];
+    float bx1 = bl.x, bx2 = bl.x + 16;
+    float by1 = bl.y, by2 = bl.y + 16;
+    float px1 = player.x, px2 = player.x + PW;
+    if (!(px2 > bx1 && px1 < bx2))
+      continue; // pas de chevauchement horizontal
+
+    float py2 = player.y;
+    float py2_prev = player.y - player.velY; // pieds à la frame précédente
+
+    // CAS A : atterrissage sur le dessus du bloc
+    if (py2_prev <= by1 && py2 >= by1 && player.velY >= 0)
+    {
+      player.y = by1;
+      player.velY = 0.0f;
+      player.onGround = true;
+    }
+    // CAS B : frappe par en-dessous (uniquement si pas déjà frappé)
+    else if (!bl.hit)
+    {
+      float py1 = player.y - PH_eff;      // tête à la frame courante
+      float py1_prev = py2_prev - PH_eff; // tête à la frame précédente
+      if (py1_prev >= by2 && py1 <= by2 && player.velY < 0)
+      {
+        bl.hit = true;
+        if (bl.obj)
+          lv_obj_set_style_bg_color(bl.obj, lv_color_hex(0x9E9E9E), 0);
+        if (bl.mark)
+          lv_obj_add_flag(bl.mark, LV_OBJ_FLAG_HIDDEN); // cache le "?"
+        player.velY = 2.0f;                             // petit rebond vers le bas
+        player.y = by2 + PH_eff;                        // repousse la tête hors du bloc
+
+        // Type 0 = brique décorative : pas d'item
+        if (bl.powerUpType > 0 && itemCount < MAX_ITEMS)
+        {
+          uint32_t col = (bl.powerUpType == 1)   ? 0xE53935  // champignon rouge
+                         : (bl.powerUpType == 2) ? 0xFF9900  // fleur orange
+                                                 : 0x1E88E5; // mini bleu
+          lv_obj_t *itObj = makeRect(lv_scr_act(),
+                                     (int)(bl.x + 2 - cameraX),
+                                     (int)(bl.y - 14),
+                                     12, 12, col);
+          items[itemCount++] = {bl.x + 2, bl.y - 14, -1.5f,
+                                bl.powerUpType, true, false, itObj};
+        }
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ITEMS : physique + collecte
+  // ══════════════════════════════════════════════════════════════════════════
+  for (int i = 0; i < itemCount; i++)
+  {
+    Item &it = items[i];
+    if (!it.active)
+      continue;
+
+    if (!it.onGround)
+      it.velY += 0.25f;
+    it.y += it.velY;
+
+    // Atterrissage sur une dalle de sol (non-cave)
+    if (!it.onGround)
+    {
+      float it_bot = it.y + 12;
+      float it_bot_prev = it_bot - it.velY;
+      for (int j = 0; j < platformCount; j++)
+      {
+        Platform &pp = platforms[j];
+        if (pp.isCave)
+          continue;
+        if (it.x + 12 <= pp.x || it.x >= pp.x + pp.w)
+          continue;
+        if (it_bot_prev <= pp.y && it_bot >= pp.y)
+        {
+          it.y = pp.y - 12;
+          it.velY = 0.0f;
+          it.onGround = true;
+          break;
+        }
+      }
+    }
+
+    // Tombé dans un trou : disparaît
+    if (it.y > SCREEN_H + 30)
+    {
+      it.active = false;
+      if (it.obj)
+        lv_obj_add_flag(it.obj, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+
+    // Collecte (hitbox généreuse +4px)
+    bool tX = (player.x + PW + 4 > it.x) && (player.x - 4 < it.x + 12);
+    bool tY = (player.y > it.y - 4) && (player.y - PH_eff < it.y + 16);
+    if (tX && tY)
+    {
+      player.powerUp = (PowerUp)it.type;
+      if (it.type == POWERUP_FIRE)
+        fireTimer = FIRE_DURATION;
+      player.score += 50;
+      it.active = false;
+      if (it.obj)
+        lv_obj_add_flag(it.obj, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FLEUR DE FEU : timer + tir + déplacement des boules
+  // ══════════════════════════════════════════════════════════════════════════
+  if (fireTimer > 0)
+  {
+    fireTimer--;
+    if (fireTimer == 0)
+      player.powerUp = POWERUP_NONE;
+  }
+
+  // Tir : joystick HAUT + bouton DOWN, 1 tir par appui (cooldown)
+  if (!in.isUp() || !in.buttonDown)
+    fireCooldown = false;
+
+  if (player.powerUp == POWERUP_FIRE && fireTimer > 0 &&
+      in.isUp() && in.buttonDown && !fireCooldown)
+  {
+    fireCooldown = true;
+    int fbSlot = -1;
+    for (int k = 0; k < MAX_FIREBALLS; k++)
+      if (!fireballs[k].active)
+      {
+        fbSlot = k;
+        break;
+      }
+    if (fbSlot < 0 && fireballCount < MAX_FIREBALLS)
+      fbSlot = fireballCount++;
+    if (fbSlot >= 0)
+    {
+      float fbVel = (player.velX >= 0.0f) ? 5.0f : -5.0f;
+      if (!fireballs[fbSlot].obj)
+        fireballs[fbSlot].obj = makeRect(lv_scr_act(), 0, 0, 8, 8, 0xFF6600);
+      else
+        lv_obj_clear_flag(fireballs[fbSlot].obj, LV_OBJ_FLAG_HIDDEN);
+      fireballs[fbSlot] = {player.x + 4, player.y - 12, fbVel, true, fireballs[fbSlot].obj};
+    }
+  }
+
+  for (int i = 0; i < fireballCount; i++)
+  {
+    FireBall &fb = fireballs[i];
+    if (!fb.active)
+      continue;
+    fb.x += fb.velX;
+    if (fb.x < 0 || fb.x > WORLD_W)
+    {
+      fb.active = false;
+      if (fb.obj)
+        lv_obj_add_flag(fb.obj, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    for (int j = 0; j < goombaCount; j++)
+    {
+      Goomba &g = goombas[j];
+      if (!g.alive)
+        continue;
+      if (fb.x + 8 > g.x && fb.x < g.x + GOOMBA_W &&
+          fb.y + 8 > g.y - GOOMBA_H && fb.y < g.y)
+      {
+        g.alive = false;
+        if (g.objHat)
+          lv_obj_add_flag(g.objHat, LV_OBJ_FLAG_HIDDEN);
+        if (g.objBody)
+          lv_obj_add_flag(g.objBody, LV_OBJ_FLAG_HIDDEN);
+        if (g.objFeetL)
+          lv_obj_add_flag(g.objFeetL, LV_OBJ_FLAG_HIDDEN);
+        if (g.objFeetR)
+          lv_obj_add_flag(g.objFeetR, LV_OBJ_FLAG_HIDDEN);
+        player.score += 200;
+        fb.active = false;
+        if (fb.obj)
+          lv_obj_add_flag(fb.obj, LV_OBJ_FLAG_HIDDEN);
+        break;
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DRAPEAU / CHUTE / GOOMBAS
+  // ══════════════════════════════════════════════════════════════════════════
   float pcx = player.x + PW * 0.5f;
   if (pcx >= flagX - 8 && pcx <= flagX + FLAG_POLE_W + 8 && player.y >= GROUND_Y - PH - 10)
   {
@@ -304,7 +533,6 @@ void updateGame(InputState &in)
       triggerGameOver();
       return;
     }
-    // Respawn au debut du niveau actuel, score conserve
     saves[activeSaveSlot].lives = player.lives;
     saves[activeSaveSlot].score = player.score;
     saves[activeSaveSlot].currentLevel = currentLevel;
@@ -314,6 +542,8 @@ void updateGame(InputState &in)
     player.velY = 0.0f;
     player.onGround = true;
     player.crouching = false;
+    player.powerUp = POWERUP_NONE;
+    fireTimer = 0;
     cameraX = 0.0f;
   }
   if (player.x < 0.0f)
@@ -366,26 +596,50 @@ void updateGame(InputState &in)
       }
       else
       {
-        player.lives--;
-        if (player.lives < 0)
-          player.lives = 0;
-        if (player.lives == 0)
+        // BUG FIX : sans compteur d'invincibilité, le léger recul (2px/frame)
+        // après avoir perdu le power-up était trop lent pour sortir de la
+        // hitbox du Goomba en un seul frame. Le contact se redéclenchait donc
+        // la frame suivante, mais avec powerUp déjà à NONE -> on retombait
+        // dans la branche "perdre une vie" : le joueur perdait le power-up
+        // ET une vie pour un seul contact. hitCooldown ignore tout nouveau
+        // contact Goomba pendant les frames suivant un coup, comme les
+        // frames d'invincibilité du vrai Mario après une touche.
+        if (player.hitCooldown <= 0)
         {
-          saves[activeSaveSlot].score = player.score;
-          saves[activeSaveSlot].currentLevel = currentLevel;
-          triggerGameOver();
-          return;
+          if (player.powerUp != POWERUP_NONE)
+          {
+            // Power-up actif : le perdre au lieu d'une vie
+            player.powerUp = POWERUP_NONE;
+            fireTimer = 0;
+            player.velX = (player.x > goombas[i].x) ? 2.0f : -2.0f;
+            player.velY = JUMP_VELOCITY * 0.4f;
+            player.onGround = false;
+            player.hitCooldown = 40; // ~1.6s d'invincibilité (40 frames @ 25fps)
+          }
+          else
+          {
+            player.lives--;
+            if (player.lives < 0)
+              player.lives = 0;
+            if (player.lives == 0)
+            {
+              saves[activeSaveSlot].score = player.score;
+              saves[activeSaveSlot].currentLevel = currentLevel;
+              triggerGameOver();
+              return;
+            }
+            saves[activeSaveSlot].lives = player.lives;
+            saves[activeSaveSlot].score = player.score;
+            saves[activeSaveSlot].currentLevel = currentLevel;
+            player.x = 50.0f;
+            player.y = GROUND_Y;
+            player.velX = 0.0f;
+            player.velY = 0.0f;
+            player.onGround = true;
+            player.hitCooldown = 40;
+            cameraX = 0.0f;
+          }
         }
-        // Respawn, score conserve
-        saves[activeSaveSlot].lives = player.lives;
-        saves[activeSaveSlot].score = player.score;
-        saves[activeSaveSlot].currentLevel = currentLevel;
-        player.x = 50.0f;
-        player.y = GROUND_Y;
-        player.velX = 0.0f;
-        player.velY = 0.0f;
-        player.onGround = true;
-        cameraX = 0.0f;
       }
     }
   }
@@ -579,12 +833,15 @@ static void startBtnCb(lv_event_t *e)
   showGame();
 }
 
-#define SKY_COLOR 0xB3E5FC
-#define GROUND_COLOR 0x4A7C3F
-#define GRASS_COLOR 0x66BB6A
+// Palette rapprochée du vrai Super Mario Bros (NES) :
+// ciel bleu plus saturé, sol brique brun-orangé (le vrai jeu n'a PAS de
+// bande d'herbe verte sur le sol, juste des blocs brique/terre).
+#define SKY_COLOR 0x5C94FC
+#define GROUND_COLOR 0xB06A35
+#define GRASS_COLOR 0xD98C4A
 #define GOOMBA_HAT_COL 0x4E342E
 #define GOOMBA_BODY_COL 0x795548
-#define GOOMBA_FEET_COL 0xA1887F
+#define GOOMBA_FEET_COL 0xD9B98C
 
 static lv_obj_t *objSky = nullptr, *objGround = nullptr, *objGrass = nullptr;
 static lv_obj_t *objPlayer = nullptr, *objHead = nullptr;
@@ -685,12 +942,27 @@ void triggerGameOver()
     goombas[j].objFeetR = nullptr;
   }
   goombaCount = 0;
-  // Sauvegarde le score et le niveau atteint avant de réinitialiser les vies.
-  // Ainsi quand on recharge ce slot, on repart du dernier niveau validé
-  // avec le score qu'on avait accumulé jusque-là.
+  for (int k = 0; k < blockCount; k++)
+  {
+    blocks[k].obj = nullptr;
+    blocks[k].mark = nullptr;
+  }
+  blockCount = 0;
+  for (int k = 0; k < itemCount; k++)
+    items[k].obj = nullptr;
+  itemCount = 0;
+  fireballCount = 0;
+  fireTimer = 0;
+  fireCooldown = false;
+  player.powerUp = POWERUP_NONE;
+  // BUG FIX : avant, ces 3 lignes remettaient TOUJOURS lives/score/niveau à
+  // zéro, écrasant la sauvegarde que l'appelant venait de faire juste avant
+  // (score et currentLevel au moment de la mort). Le joueur perdait donc tout
+  // son score et redémarrait au niveau 0 en rechargeant la partie, au lieu de
+  // reprendre au niveau qu'il n'avait pas réussi avec son score. On garde
+  // uniquement la réinitialisation des vies (3 vies fraîches pour retenter),
+  // score et currentLevel restent ceux déjà sauvegardés par l'appelant.
   saves[activeSaveSlot].lives = 3;
-  // score et currentLevel sont déjà à jour (mis par nextLevel ou par
-  // les blocs de mort ci-dessus) — on ne les remet PAS à zéro.
   lv_obj_clean(lv_scr_act());
   currentScreen = SCREEN_MENU;
   showMenu();
@@ -748,6 +1020,18 @@ void nextLevel()
     goombas[j].objFeetR = nullptr;
   }
   goombaCount = 0;
+  for (int k = 0; k < blockCount; k++)
+  {
+    blocks[k].obj = nullptr;
+    blocks[k].mark = nullptr;
+  }
+  blockCount = 0;
+  for (int k = 0; k < itemCount; k++)
+    items[k].obj = nullptr;
+  itemCount = 0;
+  fireballCount = 0;
+  fireTimer = 0;
+  fireCooldown = false;
   player.x = 50.0f;
   player.y = GROUND_Y;
   player.velX = 0.0f;
@@ -855,7 +1139,7 @@ static void drawPlayer(lv_obj_t *scr)
   const int S = 2;
   int c = player.characterId;
   uint32_t colHat = (c == CHAR_LUIGI) ? 0x388E3C : 0xE53935;
-  uint32_t colPants = 0x1565C0, colShoes = 0x5D4037, colSkin = 0xFFCDD2;
+  uint32_t colPants = 0x1565C0, colShoes = 0x5D4037, colSkin = 0xFFB385;
   uint32_t colHair = (c == CHAR_TOAD) ? 0xFFFFFF : 0x5D4037;
   uint32_t colEyes = 0x212121, colNose = 0xFF8A80, colBrim = 0xEEEEEE;
   if (c == CHAR_MARIO || c == CHAR_LUIGI)
@@ -929,14 +1213,36 @@ void initGameObjects(lv_obj_t *scr)
       delete lvl;
     }
   }
-  // Crée les objets LVGL pour chaque plateforme
+  // ── Crée les sprites LVGL des plateformes (UNE SEULE FOIS) ────────────────
   for (int i = 0; i < platformCount; i++)
     platObjs[i] = makeRect(scr,
-                           (int)(platforms[i].x - cameraX),
-                           (int)(platforms[i].y),
-                           (int)platforms[i].w,
-                           (int)platforms[i].h,
-                           platforms[i].color);
+                           (int)(platforms[i].x - cameraX), (int)(platforms[i].y),
+                           (int)platforms[i].w, (int)platforms[i].h, platforms[i].color);
+
+  // ── Crée les sprites LVGL des blocs ─────────────────────────────────────
+  // Type 0 = brique décorative (couleur brique, pas de "?")
+  // Type 1/2/3 = bloc "?" doré avec le symbole "?" affiché par-dessus,
+  // exactement comme dans le vrai Mario : carré 16x16, jaune/orange.
+  for (int i = 0; i < blockCount; i++)
+  {
+    Block &bl = blocks[i];
+    uint32_t blockColor = (bl.powerUpType == 0) ? 0xC77B3D : 0xF7B733;
+    bl.obj = makeRect(scr,
+                      (int)(bl.x - cameraX), (int)(bl.y),
+                      16, 16, blockColor);
+    if (bl.powerUpType > 0)
+    {
+      bl.mark = lv_label_create(scr);
+      lv_label_set_text(bl.mark, "?");
+      lv_obj_set_style_text_color(bl.mark, lv_color_hex(0x3E2723), 0);
+      lv_obj_set_style_text_font(bl.mark, &lv_font_montserrat_14, 0);
+      lv_obj_set_pos(bl.mark, (int)(bl.x - cameraX) + 4, (int)(bl.y) - 1);
+    }
+    else
+    {
+      bl.mark = nullptr;
+    }
+  }
 
   // Drapeau
   int fsx = (int)(flagX - cameraX);
@@ -961,52 +1267,75 @@ void renderGame()
   cameraX += (targetX - cameraX) * 0.15f;
   int screenPX = (int)(player.x - cameraX);
   const int S = 2;
-  int spriteH = (player.characterId == CHAR_TOAD) ? 15 * S : 13 * S;
+  int baseH = (player.characterId == CHAR_TOAD) ? 15 * S : 13 * S;
+  int spriteH;
+  if (player.powerUp == POWERUP_MUSHROOM)
+    spriteH = baseH + 6 * S;
+  else if (player.powerUp == POWERUP_MINI)
+    spriteH = baseH - 5 * S;
+  else
+    spriteH = baseH;
   int screenPY = (int)(player.y);
   int legOffset = player.crouching ? 2 * S : 0;
   int by = screenPY - spriteH + legOffset, bx = screenPX, c = player.characterId;
 
+  // ── Mise à l'échelle verticale des sprites selon le power-up ───────────────
+  // baseH/spriteH/by ci-dessus changent avec le power-up, mais les décalages
+  // dy de chaque partie du corps (ex: "8*S" pour les jambes) étaient codés en
+  // dur pour la taille de base : ils ne suivaient pas spriteH. Résultat : en
+  // champignon (spriteH > baseH) les pieds se retrouvaient dessinés au-dessus
+  // de player.y -> impression de voler ; en mini (spriteH < baseH) ils se
+  // retrouvaient dessous -> impression d'être enfoncé dans le sol.
+  // Fix : on multiplie chaque décalage vertical par scaleY = spriteH/baseH,
+  // ce qui étire/compresse le corps proportionnellement et garde toujours les
+  // pieds exactement à by + spriteH = screenPY (le sol), quel que soit le
+  // power-up. Les décalages horizontaux (dx) ne sont pas affectés : seule la
+  // hauteur change, comme dans le design d'origine.
+  float scaleY = (float)spriteH / (float)baseH;
+  auto sy = [scaleY](int v)
+  { return (int)(v * scaleY); };
+
   if (c == CHAR_MARIO || c == CHAR_LUIGI)
   {
     int lo = player.crouching ? 2 * S : 0;
-    moveSprite(spHatTop, bx, by, 3 * S, 0 * S);
-    moveSprite(spHat, bx, by, 2 * S, 1 * S);
-    moveSprite(objHead, bx, by, 3 * S, 2 * S);
-    moveSprite(spHair[0], bx, by, 3 * S, 2 * S);
-    moveSprite(spHair[1], bx, by, 7 * S, 2 * S);
-    moveSprite(spEye[0], bx, by, 4 * S, 3 * S);
-    moveSprite(spEye[1], bx, by, 7 * S, 3 * S);
-    moveSprite(spMustache, bx, by, 3 * S, 4 * S);
-    moveSprite(spShirt, bx, by, 2 * S, 5 * S);
-    moveSprite(spArm[0], bx, by, 1 * S, 5 * S);
-    moveSprite(spArm[1], bx, by, 10 * S, 5 * S);
-    moveSprite(spLegL, bx, by, 2 * S, 8 * S - lo);
-    moveSprite(spLegR, bx, by, 7 * S, 8 * S - lo);
-    moveSprite(spLegMid, bx, by, 4 * S, 8 * S - lo);
-    moveSprite(spShoeL, bx, by, 2 * S, 11 * S - lo);
-    moveSprite(spShoeR, bx, by, 7 * S, 11 * S - lo);
+    moveSprite(spHatTop, bx, by, 3 * S, sy(0 * S));
+    moveSprite(spHat, bx, by, 2 * S, sy(1 * S));
+    moveSprite(objHead, bx, by, 3 * S, sy(2 * S));
+    moveSprite(spHair[0], bx, by, 3 * S, sy(2 * S));
+    moveSprite(spHair[1], bx, by, 7 * S, sy(2 * S));
+    moveSprite(spEye[0], bx, by, 4 * S, sy(3 * S));
+    moveSprite(spEye[1], bx, by, 7 * S, sy(3 * S));
+    moveSprite(spMustache, bx, by, 3 * S, sy(4 * S));
+    moveSprite(spShirt, bx, by, 2 * S, sy(5 * S));
+    moveSprite(spArm[0], bx, by, 1 * S, sy(5 * S));
+    moveSprite(spArm[1], bx, by, 10 * S, sy(5 * S));
+    moveSprite(spLegL, bx, by, 2 * S, sy(8 * S) - lo);
+    moveSprite(spLegR, bx, by, 7 * S, sy(8 * S) - lo);
+    moveSprite(spLegMid, bx, by, 4 * S, sy(8 * S) - lo);
+    moveSprite(spShoeL, bx, by, 2 * S, sy(11 * S) - lo);
+    moveSprite(spShoeR, bx, by, 7 * S, sy(11 * S) - lo);
   }
   else
   {
     int lo = player.crouching ? 2 * S : 0;
-    moveSprite(spHatTop, bx, by, 0 * S, 0 * S);
-    moveSprite(spHat, bx, by, 0 * S, 1 * S);
-    moveSprite(spHatBrim, bx, by, 1 * S, 4 * S);
-    moveSprite(spHair[0], bx, by, 1 * S, 1 * S);
-    moveSprite(spHair[1], bx, by, 5 * S, 1 * S);
-    moveSprite(spSpot3, bx, by, 8 * S, 1 * S);
-    moveSprite(objHead, bx, by, 2 * S, 4 * S);
-    moveSprite(spEye[0], bx, by, 3 * S, 5 * S);
-    moveSprite(spEye[1], bx, by, 7 * S, 5 * S);
-    moveSprite(spMustache, bx, by, 5 * S, 6 * S);
-    moveSprite(spShirt, bx, by, 2 * S, 7 * S);
-    moveSprite(spArm[0], bx, by, 1 * S, 7 * S);
-    moveSprite(spArm[1], bx, by, 10 * S, 7 * S);
-    moveSprite(spLegL, bx, by, 2 * S, 10 * S - lo);
-    moveSprite(spLegR, bx, by, 7 * S, 10 * S - lo);
-    moveSprite(spLegMid, bx, by, 4 * S, 10 * S - lo);
-    moveSprite(spShoeL, bx, by, 2 * S, 13 * S - lo);
-    moveSprite(spShoeR, bx, by, 7 * S, 13 * S - lo);
+    moveSprite(spHatTop, bx, by, 0 * S, sy(0 * S));
+    moveSprite(spHat, bx, by, 0 * S, sy(1 * S));
+    moveSprite(spHatBrim, bx, by, 1 * S, sy(4 * S));
+    moveSprite(spHair[0], bx, by, 1 * S, sy(1 * S));
+    moveSprite(spHair[1], bx, by, 5 * S, sy(1 * S));
+    moveSprite(spSpot3, bx, by, 8 * S, sy(1 * S));
+    moveSprite(objHead, bx, by, 2 * S, sy(4 * S));
+    moveSprite(spEye[0], bx, by, 3 * S, sy(5 * S));
+    moveSprite(spEye[1], bx, by, 7 * S, sy(5 * S));
+    moveSprite(spMustache, bx, by, 5 * S, sy(6 * S));
+    moveSprite(spShirt, bx, by, 2 * S, sy(7 * S));
+    moveSprite(spArm[0], bx, by, 1 * S, sy(7 * S));
+    moveSprite(spArm[1], bx, by, 10 * S, sy(7 * S));
+    moveSprite(spLegL, bx, by, 2 * S, sy(10 * S) - lo);
+    moveSprite(spLegR, bx, by, 7 * S, sy(10 * S) - lo);
+    moveSprite(spLegMid, bx, by, 4 * S, sy(10 * S) - lo);
+    moveSprite(spShoeL, bx, by, 2 * S, sy(13 * S) - lo);
+    moveSprite(spShoeR, bx, by, 7 * S, sy(13 * S) - lo);
   }
 
   char buf[48];
@@ -1014,7 +1343,11 @@ void renderGame()
   lv_label_set_text(lblScore, buf);
   snprintf(buf, sizeof(buf), "x%d", player.lives);
   lv_label_set_text(lblLives, buf);
-  snprintf(buf, sizeof(buf), "Niv.%d", currentLevel + 1);
+  // Affiche le timer fleur de feu dans le label niveau si actif
+  if (player.powerUp == POWERUP_FIRE && fireTimer > 0)
+    snprintf(buf, sizeof(buf), "Niv.%d [F%d]", currentLevel + 1, fireTimer / 25 + 1);
+  else
+    snprintf(buf, sizeof(buf), "Niv.%d", currentLevel + 1);
   lv_label_set_text(lblLevel, buf);
   snprintf(buf, sizeof(buf), "x:%.0f y:%.0f", player.x, player.y);
   lv_label_set_text(lblDebug, buf);
@@ -1024,6 +1357,25 @@ void renderGame()
   for (int i = 0; i < platformCount; i++)
     if (platObjs[i])
       lv_obj_set_pos(platObjs[i], (int)(platforms[i].x - cameraX), (int)(platforms[i].y));
+
+  // Repositionne les blocs et leur label "?"
+  for (int i = 0; i < blockCount; i++)
+  {
+    if (blocks[i].obj)
+      lv_obj_set_pos(blocks[i].obj, (int)(blocks[i].x - cameraX), (int)(blocks[i].y));
+    if (blocks[i].mark)
+      lv_obj_set_pos(blocks[i].mark, (int)(blocks[i].x - cameraX) + 4, (int)(blocks[i].y) - 1);
+  }
+
+  // Repositionne les items au sol
+  for (int i = 0; i < itemCount; i++)
+    if (items[i].active && items[i].obj)
+      lv_obj_set_pos(items[i].obj, (int)(items[i].x - cameraX), (int)(items[i].y));
+
+  // Repositionne les boules de feu
+  for (int i = 0; i < fireballCount; i++)
+    if (fireballs[i].active && fireballs[i].obj)
+      lv_obj_set_pos(fireballs[i].obj, (int)(fireballs[i].x - cameraX), (int)(fireballs[i].y));
 
   const int GS = 2;
   for (int i = 0; i < goombaCount; i++)
@@ -1091,6 +1443,18 @@ void showGame()
     goombas[i].objFeetR = nullptr;
   }
   goombaCount = 0;
+  for (int k = 0; k < blockCount; k++)
+  {
+    blocks[k].obj = nullptr;
+    blocks[k].mark = nullptr;
+  }
+  blockCount = 0;
+  for (int k = 0; k < itemCount; k++)
+    items[k].obj = nullptr;
+  itemCount = 0;
+  fireballCount = 0;
+  fireTimer = 0;
+  fireCooldown = false;
   initGameObjects(scr);
 }
 
