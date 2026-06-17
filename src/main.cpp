@@ -577,6 +577,16 @@ void updateGame(InputState &in)
       }
     if (fbSlot < 0 && fireballCount < MAX_FIREBALLS)
       fbSlot = fireballCount++;
+    // BUG FIX : quand un emplacement libre était trouvé par le scan juste
+    // au-dessus (cas le plus courant), fireballCount n'était JAMAIS avancé.
+    // Or les boucles de déplacement et de rendu sont bornées par
+    // fireballCount ("for i < fireballCount") : un emplacement utilisé mais
+    // situé au-delà de fireballCount n'était donc jamais déplacé ni repositionné
+    // à l'écran -> il restait figé à sa position de création (0,0), exactement
+    // le symptôme "boule fantôme en haut à gauche" déjà observé. On force
+    // maintenant fireballCount à couvrir tout emplacement réellement utilisé.
+    if (fbSlot >= fireballCount)
+      fireballCount = fbSlot + 1;
     if (fbSlot >= 0)
     {
       float fbVel = (player.velX >= 0.0f) ? 5.0f : -5.0f;
@@ -1001,6 +1011,14 @@ static lv_obj_t *spShoeL = nullptr, *spShoeR = nullptr;
 lv_obj_t *makeRect(lv_obj_t *parent, int x, int y, int w, int h, uint32_t color)
 {
   lv_obj_t *obj = lv_obj_create(parent);
+  // BUG FIX (durcissement) : si le pool mémoire de LVGL (LV_MEM_SIZE dans
+  // lv_conf.h) est plein au moment de cet appel, lv_obj_create() renvoie
+  // nullptr. Sans cette vérification, chacun des lv_obj_set_xxx() suivants
+  // déréférençait ce pointeur nul -> Hard Fault / freeze total de la carte.
+  // On retourne maintenant nullptr immédiatement : il manquera un sprite à
+  // l'écran (dégradation visible mais bénigne) au lieu de figer la carte.
+  if (!obj)
+    return nullptr;
   lv_obj_set_pos(obj, x, y);
   lv_obj_set_size(obj, w, h);
   lv_obj_set_style_bg_color(obj, lv_color_hex(color), 0);
@@ -1016,6 +1034,9 @@ lv_obj_t *makeRect(lv_obj_t *parent, int x, int y, int w, int h, uint32_t color)
 static lv_obj_t *makeHudLabel(lv_obj_t *parent, int x, int y, int w)
 {
   lv_obj_t *lbl = lv_label_create(parent);
+  // BUG FIX (durcissement) : même raison que dans makeRect() juste au-dessus.
+  if (!lbl)
+    return nullptr;
   lv_obj_set_pos(lbl, x, y);
   lv_obj_set_width(lbl, w);
   lv_obj_set_style_text_color(lbl, lv_color_hex(0x212121), 0);
@@ -1096,6 +1117,16 @@ void triggerGameOver()
   for (int k = 0; k < itemCount; k++)
     items[k].obj = nullptr;
   itemCount = 0;
+  // BUG FIX : fireballs[] n'etait jamais reinitialise ici (contrairement
+  // a blocks[]/items[] juste au-dessus). Si une boule de feu restait
+  // marquee active a la fin du niveau, son pointeur .obj devenait pendant
+  // apres le lv_obj_clean() du changement de niveau -> reutilise plus tard,
+  // ca declenchait un Hard Fault (figure / freeze total).
+  for (int k = 0; k < MAX_FIREBALLS; k++)
+  {
+    fireballs[k].obj = nullptr;
+    fireballs[k].active = false;
+  }
   fireballCount = 0;
   powerUpTimer = 0;
   fireCooldown = false;
@@ -1180,6 +1211,16 @@ void nextLevel()
   for (int k = 0; k < itemCount; k++)
     items[k].obj = nullptr;
   itemCount = 0;
+  // BUG FIX : fireballs[] n'etait jamais reinitialise ici (contrairement
+  // a blocks[]/items[] juste au-dessus). Si une boule de feu restait
+  // marquee active a la fin du niveau, son pointeur .obj devenait pendant
+  // apres le lv_obj_clean() du changement de niveau -> reutilise plus tard,
+  // ca declenchait un Hard Fault (figure / freeze total).
+  for (int k = 0; k < MAX_FIREBALLS; k++)
+  {
+    fireballs[k].obj = nullptr;
+    fireballs[k].active = false;
+  }
   fireballCount = 0;
   powerUpTimer = 0;
   fireCooldown = false;
@@ -1407,10 +1448,15 @@ void initGameObjects(lv_obj_t *scr)
     if (bl.powerUpType > 0)
     {
       bl.mark = lv_label_create(scr);
-      lv_label_set_text(bl.mark, "?");
-      lv_obj_set_style_text_color(bl.mark, lv_color_hex(0x3E2723), 0);
-      lv_obj_set_style_text_font(bl.mark, &lv_font_montserrat_14, 0);
-      lv_obj_set_pos(bl.mark, (int)(bl.x - cameraX) + 4, (int)(bl.y) - 1);
+      // BUG FIX (durcissement) : même raison que makeRect() — lv_label_create
+      // peut renvoyer nullptr si le pool LVGL est plein.
+      if (bl.mark)
+      {
+        lv_label_set_text(bl.mark, "?");
+        lv_obj_set_style_text_color(bl.mark, lv_color_hex(0x3E2723), 0);
+        lv_obj_set_style_text_font(bl.mark, &lv_font_montserrat_14, 0);
+        lv_obj_set_pos(bl.mark, (int)(bl.x - cameraX) + 4, (int)(bl.y) - 1);
+      }
     }
     else
     {
@@ -1432,6 +1478,9 @@ void initGameObjects(lv_obj_t *scr)
       continue;
     }
     pipes[i].mark = lv_label_create(scr);
+    // BUG FIX (durcissement) : idem, lv_label_create peut renvoyer nullptr.
+    if (!pipes[i].mark)
+      continue;
     lv_label_set_text(pipes[i].mark, LV_SYMBOL_DOWN);
     lv_obj_set_style_text_color(pipes[i].mark, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_pos(pipes[i].mark,
@@ -1668,6 +1717,16 @@ void showGame()
   for (int k = 0; k < itemCount; k++)
     items[k].obj = nullptr;
   itemCount = 0;
+  // BUG FIX : fireballs[] n'etait jamais reinitialise ici (contrairement
+  // a blocks[]/items[] juste au-dessus). Si une boule de feu restait
+  // marquee active a la fin du niveau, son pointeur .obj devenait pendant
+  // apres le lv_obj_clean() du changement de niveau -> reutilise plus tard,
+  // ca declenchait un Hard Fault (figure / freeze total).
+  for (int k = 0; k < MAX_FIREBALLS; k++)
+  {
+    fireballs[k].obj = nullptr;
+    fireballs[k].active = false;
+  }
   fireballCount = 0;
   powerUpTimer = 0;
   fireCooldown = false;
