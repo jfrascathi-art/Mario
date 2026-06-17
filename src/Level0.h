@@ -43,8 +43,14 @@ public:
         // devant l'escalier — un petit raccourci comme dans le vrai jeu.
         addPipe(2350, 48, true, 2700);
         // Escalier final façon "Hard Blocks" de la fin du niveau 1-1 : 5
-        // marches de 16px, de 16 à 80px de haut, juste avant le mât.
-        addStaircase(2760, 5);
+        // marches de 16px, de 16 à 80px de haut.
+        // BUG FIX : se terminait à flagX-10, soit DANS la zone de
+        // déclenchement du drapeau qui commence dès flagX-8 (voir
+        // updateGame()) — il suffisait quasiment de poser le pied sur la
+        // dernière marche pour finir le niveau, sans même la place de
+        // sauter. Reculé pour finir à flagX-50 : il reste maintenant 42px
+        // de marche réelle avant que le drapeau ne se déclenche.
+        addStaircase(2720, 5);
 
         // ── Blocs style Mario ────────────────────────────────────────────────
         // Rangée 1 (x=80..128) : brique - champignon - brique - brique
@@ -66,8 +72,8 @@ public:
         addBlock(1500, 144, 1);
 
         // ── Drapeau ───────────────────────────────────────────────────────────
-        // Inchangé : l'escalier (qui se termine à x=2840) laisse exactement
-        // 10px avant le mât, comme dans le vrai jeu.
+        // L'escalier se termine maintenant à x=2800, laissant 50px avant
+        // le mât (au lieu de 10px avant le correctif ci-dessus).
         flagX = 2850.0f;
 
         // ── Goombas ───────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 #include "lv_conf.h"
 #include "stm32746g_discovery_lcd.h"
 #include "stm32746g_discovery_ts.h"
+#include <string.h>
 
 static SemaphoreHandle_t lvglMutex;
 
@@ -36,15 +37,29 @@ static void lvglTask(void *pvParameters)
 
 static void my_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t *px_map)
 {
-    uint32_t *buf = (uint32_t *)px_map;
-    int32_t x, y;
-    for (y = area->y1; y <= area->y2; y++)
+    // BUG FIX (performance — c'est la cause probable du lag, et des
+    // "freeze" si une zone rafraîchie est assez grande pour bloquer trop
+    // longtemps) : cette fonction dessinait CHAQUE PIXEL un par un via
+    // BSP_LCD_DrawPixel — qui elle-même rappelle BSP_LCD_GetXSize() à
+    // CHAQUE pixel. Pour un simple rectangle de 64×16px (1024 pixels),
+    // ça fait plus de 2000 appels de fonction. Le calque LCD est
+    // configuré en ARGB8888 32 bits (BSP_LCD_LayerDefaultInit, dans
+    // setup() plus bas) — EXACTEMENT le même format que LV_COLOR_DEPTH=32
+    // utilisé par LVGL (voir lv_conf.h). Comme les deux formats sont
+    // identiques, on peut copier chaque LIGNE entière d'un seul coup avec
+    // memcpy, directement dans le framebuffer (en SDRAM, à
+    // LCD_FB_START_ADDRESS), au lieu d'écrire pixel par pixel — un seul
+    // appel par ligne au lieu d'un par pixel.
+    const int32_t screenW = (int32_t)BSP_LCD_GetXSize();
+    uint32_t *fb = (uint32_t *)LCD_FB_START_ADDRESS;
+    uint32_t *src = (uint32_t *)px_map;
+    int32_t rowPixels = area->x2 - area->x1 + 1;
+
+    for (int32_t y = area->y1; y <= area->y2; y++)
     {
-        for (x = area->x1; x <= area->x2; x++)
-        {
-            BSP_LCD_DrawPixel(x, y, *buf);
-            buf++;
-        }
+        uint32_t *dstRow = fb + ((int32_t)y * screenW + area->x1);
+        memcpy(dstRow, src, (size_t)rowPixels * sizeof(uint32_t));
+        src += rowPixels;
     }
 
     // IMPORTANT!!!
@@ -83,9 +98,8 @@ void setup()
 
     lv_init();
 
-    lv_log_register_print_cb([](lv_log_level_t level, const char *buf) {
-        Serial.printf("%s", buf);
-    });
+    lv_log_register_print_cb([](lv_log_level_t level, const char *buf)
+                             { Serial.printf("%s", buf); });
 
     lv_display_t *display = lv_display_create(480, 272);
 
@@ -103,10 +117,21 @@ void setup()
 
     mySetup();
 
-    xTaskCreate(lvglTask, NULL, 16384, NULL, osPriorityNormal, NULL);
-    xTaskCreate(myTask, NULL, 16384, NULL, osPriorityNormal, NULL);
+    // On nomme maintenant les deux taches (au lieu de NULL) : ca ne change
+    // rien au comportement, mais ca permet au hook de depassement de pile
+    // (vApplicationStackOverflowHook dans STM32FreeRTOS.c) de dire LAQUELLE
+    // des deux a deborde, via un clignotement different selon le nom recu.
+    //
+    // Pile augmentee de 16384 a 20480 mots (64 Ko -> 80 Ko, +16 Ko chacune) :
+    // marge de securite modeste en attendant de savoir, grace au diagnostic
+    // ci-dessus, laquelle des deux taches a reellement deborde. A 80 Ko x 2 =
+    // 160 Ko sur les ~199 Ko habituellement disponibles (LV_MEM_SIZE = 64 Ko
+    // dans lv_conf.h), il reste encore une marge confortable pour le reste.
+    xTaskCreate(lvglTask, "lvglTask", 20480, NULL, osPriorityNormal, NULL);
+    xTaskCreate(myTask, "myTask", 20480, NULL, osPriorityNormal, NULL);
 
     vTaskStartScheduler();
     Serial.println("Insufficient RAM");
-    while (1);
+    while (1)
+        ;
 }

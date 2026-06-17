@@ -53,6 +53,20 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*Size of the memory available for `lv_malloc()` in bytes (>= 2kB)*/
+    /* REVERT : 160 Ko provoquait un plantage immediat et total au
+       lancement (plus de LED de depassement de pile du tout -- signe
+       d'un probleme plus tot/plus severe qu'un simple depassement de
+       pile FreeRTOS). En relisant le firmware.map d'une compilation
+       precedente : le pool LVGL (ici) + les buffers d'affichage de
+       lvglDrivers.cpp utilisent deja a eux deux environ 115 Ko de RAM
+       statique sur les 320 Ko disponibles. Pousser le pool a 160 Ko
+       ne laissait plus qu'environ 105 Ko partages entre le tas et les
+       piles FreeRTOS -- visiblement insuffisant ou en conflit avec
+       autre chose dans ce projet precis. On revient a la valeur
+       d'origine, eprouvee, en attendant de pouvoir augmenter la
+       memoire PAR PETITS PALIERS (ex: +16 Ko a la fois) en verifiant
+       chaque fois qu'aucun avertissement "region RAM overflowed"
+       n'apparait a la compilation. */
     #define LV_MEM_SIZE (64 * 1024U)          /*[bytes]*/
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/

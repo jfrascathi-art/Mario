@@ -38,8 +38,11 @@ public:
         // plateforme 13. Descendre dedans saute par-dessus la patrouille du
         // Goomba du segment 4 et atterrit juste après elle (x=2150).
         addPipe(1495, 48, true, 2150);
-        // Escalier final, juste avant le mât.
-        addStaircase(2810, 5);
+        // Escalier final.
+        // BUG FIX : se terminait à flagX-10, dans la zone de déclenchement
+        // du drapeau (flagX-8, voir updateGame()) — reculé pour finir à
+        // flagX-50.
+        addStaircase(2770, 5);
 
         // Rangée 1 (x=80..128) : brique - champignon - brique - brique
         addBlock(80, 152, 0);
@@ -62,7 +65,7 @@ public:
         // Bloc isolé : champignon
         addBlock(2050, 144, 1);
 
-        // Inchangé : l'escalier se termine à x=2890, 10px avant le mât.
+        // L'escalier se termine maintenant à x=2850, 50px avant le mât.
         flagX = 2900.0f;
 
         addGoomba(180, GROUND_Y, 10, 345);

@@ -55,9 +55,12 @@ public:
         // dedans saute par-dessus toute la grotte et atterrit juste après
         // sa sortie (x=2720).
         addPipe(2330, 48, true, 2720);
-        // Escalier final, juste avant le mât (zone libérée par la
-        // suppression de l'ancienne plateforme 18 ci-dessus).
-        addStaircase(2890, 5);
+        // Escalier final (zone libérée par la suppression de l'ancienne
+        // plateforme 18 ci-dessus).
+        // BUG FIX : se terminait à flagX-10, dans la zone de déclenchement
+        // du drapeau (flagX-8, voir updateGame()) — reculé pour finir à
+        // flagX-50.
+        addStaircase(2850, 5);
 
         // Rangée dès le début
         addBlock(60, 152, 1); // champignon
@@ -87,7 +90,7 @@ public:
         // sortie de la grotte.
         addBlock(2715, 144, 2);
 
-        // Inchangé : l'escalier se termine à x=2970, 10px avant le mât.
+        // L'escalier se termine maintenant à x=2930, 50px avant le mât.
         flagX = 2980.0f;
 
         addGoomba(180, GROUND_Y, 10, 295);

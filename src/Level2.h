@@ -37,8 +37,11 @@ public:
         // Descendre dedans saute par-dessus la plateforme 13 et atterrit
         // juste après, avant la plateforme 14.
         addPipe(2280, 48, true, 2550);
-        // Escalier final, juste avant le mât.
-        addStaircase(2860, 5);
+        // Escalier final.
+        // BUG FIX : se terminait à flagX-10, dans la zone de déclenchement
+        // du drapeau (flagX-8, voir updateGame()) — reculé pour finir à
+        // flagX-50.
+        addStaircase(2820, 5);
 
         // Rangée avant 1ère grotte
         addBlock(60, 152, 0);
@@ -58,7 +61,7 @@ public:
         addBlock(2066, 152, 3); // mini
         addBlock(2082, 152, 0);
 
-        // Inchangé : l'escalier se termine à x=2940, 10px avant le mât.
+        // L'escalier se termine maintenant à x=2900, 50px avant le mât.
         flagX = 2950.0f;
 
         addGoomba(250, GROUND_Y, 10, 395);

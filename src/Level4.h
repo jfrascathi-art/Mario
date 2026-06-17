@@ -45,11 +45,17 @@ public:
         addPipe(1044, 32);
         // Tube WARP, dans l'espace dégagé entre la fin de la grotte 13 et le
         // début de la plateforme 16. Descendre dedans saute par-dessus la
-        // grotte 14 et atterrit juste après sa sortie (x=2980), juste avant
-        // l'escalier final.
-        addPipe(2428, 48, true, 2980);
-        // Escalier final, juste avant le mât.
-        addStaircase(3010, 5);
+        // grotte 14 et atterrit juste après sa sortie.
+        // BUG FIX : l'arrivée était à x=2980, qui tombe maintenant DANS le
+        // nouvel escalier reculé (voir plus bas) — ramenée à x=2952, dans
+        // le petit espace de 20px qui reste entre la sortie de la grotte 14
+        // (x=2950) et le début de l'escalier (x=2970).
+        addPipe(2428, 48, true, 2952);
+        // Escalier final.
+        // BUG FIX : se terminait à flagX-10, dans la zone de déclenchement
+        // du drapeau (flagX-8, voir updateGame()) — reculé pour finir à
+        // flagX-50.
+        addStaircase(2970, 5);
 
         // Rangée dès le début - niveau expert, peu de blocs mais utiles
         addBlock(40, 152, 3); // mini, utile pour les grottes
@@ -69,7 +75,7 @@ public:
         addBlock(1956, 152, 2); // fleur de feu
         addBlock(1972, 152, 0);
 
-        // Inchangé : l'escalier se termine à x=3090, 10px avant le mât.
+        // L'escalier se termine maintenant à x=3050, 50px avant le mât.
         flagX = 3100.0f;
 
         addGoomba(150, GROUND_Y, 10, 245);
