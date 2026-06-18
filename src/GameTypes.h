@@ -10,7 +10,13 @@
 #define SCREEN_W 480
 #define SCREEN_H 272
 #define GROUND_VISUAL_Y 200
-#define WORLD_W 3200
+// WORLD_W : largeur totale du monde, en pixels. Agrandie de 3200 à 3760 pour
+// loger l'arène du boss final ajoutée à la fin du niveau 5 (Level4.h) :
+// pont + zone de patrouille + drapeau final, voir le détail des calculs
+// dans Level4.h. Les niveaux 0 à 3 n'utilisent jamais plus de x≈3000, donc
+// cet agrandissement ne change rien pour eux (juste un peu plus de marge
+// avant la limite invisible où le joueur est bloqué, cf. updateGame()).
+#define WORLD_W 3760
 
 #define CAVE_Y 0
 #define CAVE_H ((int)(GROUND_Y - 22))
@@ -131,4 +137,61 @@ struct Pipe
     bool warp;      // true = on peut descendre dedans (joystick bas)
     float exitX;    // position d'arrivée dans le niveau si warp == true
     lv_obj_t *mark; // petite flèche "▼" au-dessus des tubes descendables (nullptr sinon)
+};
+
+// ── Boss final (fin du niveau 5) ───────────────────────────────────────────
+// Inspiré du combat final de Bowser dans le vrai Super Mario Bros (1985) :
+//   - il patrouille de gauche à droite sur un pont, comme un Goomba géant ;
+//   - il lance régulièrement un marteau qui suit une trajectoire PARABOLIQUE
+//     (même physique que le saut du joueur : vitesse verticale initiale +
+//     gravité qui s'accumule frame après frame, voir updateGame()) ;
+//   - 5 boules de feu OU 5 coups de tête sautés le vainquent (référence
+//     directe au "Repeating fireballs: 5000 points" du jeu original) ;
+//   - comme dans le vrai jeu, on peut aussi l'ÉVITER complètement en
+//     courant/sautant par-dessous lui pour rejoindre le drapeau final —
+//     le combattre n'est donc pas obligatoire pour finir le jeu, juste plus
+//     payant en score.
+// boss.x / boss.y suivent exactement la même convention que player.x/y :
+// (x,y) = coin haut-gauche en x, position des PIEDS en y.
+struct Boss
+{
+    float x, y, velX;
+    int hp; // points de vie restants (0 = vaincu)
+    bool alive;
+    int hitCooldown; // frames d'invincibilité après un coup reçu (anti double-compte)
+    int throwTimer;  // frames restantes avant le prochain lancer de marteau
+    float patrolLeft, patrolRight;
+    lv_obj_t *objBody, *objHead, *objEye, *objSpike;
+};
+
+#define BOSS_W 28.0f
+#define BOSS_H 34.0f
+#define BOSS_MAX_HP 5
+#define BOSS_SPEED 0.6f
+// BOSS_HAMMER_INTERVAL_MAX/MIN : le boss lance un marteau toutes les
+// "throwTimer" frames, et cet intervalle RACCOURCIT au fur et à mesure
+// qu'on le blesse (5 points de vie → 5 intervalles, du plus lent au plus
+// rapide) pour qu'il devienne plus agressif quand il est presque vaincu,
+// comme beaucoup de boss de jeu vidéo. Calcul détaillé dans Level4.h /
+// updateGame() : intervalle = MAX - (MAX_HP - hp) * 8, jamais sous MIN.
+#define BOSS_HAMMER_INTERVAL_MAX 70 // ~2.8s à 25 fps, à pleine vie (hp=5)
+// BOSS_HAMMER_INTERVAL_MIN : simple garde-fou défensif pour le clamp dans
+// updateGame(). Avec MAX_HP=5 et un pas de 8 par point de vie perdu, le
+// pire cas réel (hp=1, juste avant la mort) donne 70-(5-1)*8 = 38 frames
+// (~1.52s) : le clamp à 30 ne se déclenche donc jamais en pratique avec ces
+// réglages précis, mais protège automatiquement si MAX_HP ou le pas de 8
+// venaient à changer plus tard.
+#define BOSS_HAMMER_INTERVAL_MIN 30
+
+// ── Marteau (projectile du boss) ────────────────────────────────────────────
+// Trajectoire parabolique : velY commence négatif (vers le haut, comme un
+// saut) puis GRAVITY s'additionne à chaque frame jusqu'à ce qu'il retombe
+// au sol — exactement le même calcul que player.velY, réutilisé pour un
+// projectile au lieu d'un personnage.
+#define MAX_HAMMERS 3
+struct Hammer
+{
+    float x, y, velX, velY;
+    bool active;
+    lv_obj_t *obj;
 };

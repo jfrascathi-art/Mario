@@ -30,10 +30,15 @@ public:
         // (trou de 1450 à 1600) : les derniers 110px du mur de grotte
         // surplombaient donc le vide, sans aucun sol dessous. Le joueur qui
         // se baissait/rétrécissait pour passer sous la grotte tombait dans le
-        // trou au lieu d'arriver sur la terre ferme. Repositionnée et
-        // réduite à x=1250, largeur 200 (jusqu'à x=1450 exactement) : elle
-        // tient maintenant entièrement sur le segment de sol [1190,1450].
-        addCave(1250, 200, CAVE_COL); // 12
+        // trou au lieu d'arriver sur la terre ferme. Repositionnée à x=1250.
+        // BUG FIX #2 : avec une largeur de 200, la grotte finissait à x=1450,
+        // c'est-à-dire EXACTEMENT là où commence le trou (aucune marge). Le
+        // joueur sortait donc accroupi de la grotte à la toute dernière
+        // frame avant le vide : pas une seule frame pour se relever et
+        // prendre l'élan nécessaire au saut. Largeur réduite à 168 (finit à
+        // x=1418) : il reste maintenant 32px de sol dégagé (la place de se
+        // relever et de marcher un peu) avant le bord du trou à x=1450.
+        addCave(1250, 168, CAVE_COL); // 12
         addCave(1750, 350, CAVE_COL); // 13
         addCave(2400, 300, CAVE_COL); // 14
 

@@ -13,10 +13,20 @@ extern Pipe pipes[MAX_PIPES];
 extern int pipeCount;
 extern float flagX;
 extern float cameraX;
+// Boss final : un seul boss possible par niveau (pas un tableau comme les
+// Goombas), et bossActive distingue "ce niveau a un boss" de "il est mort" :
+// bossActive ne redevient jamais false tant qu'on n'a pas quitté le niveau
+// (même boss.alive==false après sa défaite), pour que le drapeau final sache
+// encore qu'il doit vérifier le bonus de score (voir updateGame()).
+extern Boss boss;
+extern bool bossActive;
+extern Hammer hammers[MAX_HAMMERS];
+extern int hammerCount;
 
 // ── Fonctions définies dans main.cpp ─────────────────────────────────────────
 extern lv_obj_t *makeRect(lv_obj_t *parent, int x, int y, int w, int h, uint32_t color);
 extern void createGoombaSprites(lv_obj_t *scr);
+extern void createBossSprites(lv_obj_t *scr);
 
 // ── Classe abstraite Level ────────────────────────────────────────────────────
 class Level
@@ -153,5 +163,29 @@ protected:
         if (blockCount >= MAX_BLOCKS)
             return;
         blocks[blockCount++] = {x, y, puType, false, nullptr, nullptr};
+    }
+
+    // ── Helper Boss ───────────────────────────────────────────────────────────
+    // x            : position de départ du boss (pieds), dans le monde
+    // patrolLeft/Right : bornes de patrouille (même logique que addGoomba)
+    // Met bossActive à true : c'est ce qui dit à updateGame()/renderGame()
+    // "il y a un combat de boss sur ce niveau, active toute la logique
+    // associée (marteaux, collisions, bonus de score au drapeau)". Aucun
+    // autre Level*.h n'appelle cette fonction, donc bossActive reste à
+    // false (sa valeur par défaut, réinitialisée à chaque niveau dans
+    // showGame()/nextLevel()) pour tous les niveaux sauf celui qui l'utilise.
+    void addBoss(float x, float patrolLeft, float patrolRight)
+    {
+        boss.x = x;
+        boss.y = GROUND_Y;
+        boss.velX = -BOSS_SPEED;
+        boss.hp = BOSS_MAX_HP;
+        boss.alive = true;
+        boss.hitCooldown = 0;
+        boss.throwTimer = BOSS_HAMMER_INTERVAL_MAX;
+        boss.patrolLeft = patrolLeft;
+        boss.patrolRight = patrolRight;
+        boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+        bossActive = true;
     }
 };

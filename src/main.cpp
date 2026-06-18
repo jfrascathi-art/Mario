@@ -15,7 +15,12 @@ enum AppScreen
 {
   SCREEN_JOYSTICK_TEST,
   SCREEN_MENU,
-  SCREEN_GAME
+  SCREEN_GAME,
+  // Écran de victoire, affiché après le drapeau final SI le boss était déjà
+  // vaincu (sinon nextLevel() s'en charge comme avant). Écran statique
+  // (un seul bouton OK), donc pas besoin de l'ajouter au if/else de myTask()
+  // — exactement comme SCREEN_MENU, qui n'y est pas non plus traité.
+  SCREEN_VICTORY
 };
 AppScreen currentScreen = SCREEN_JOYSTICK_TEST;
 
@@ -204,9 +209,21 @@ static lv_obj_t *objFlagTop = nullptr;
 #define FLAG_TOP_W 20
 #define FLAG_TOP_H 14
 
+// ── Boss final ─────────────────────────────────────────────────────────────
+// Un seul boss possible (pas un tableau comme goombas[]) : un seul niveau en
+// a un. bossActive=false par défaut, et SEUL Level4::load() (via addBoss(),
+// voir Level.h) le passe à true — donc tout le code ci-dessous gardé par
+// "if (bossActive)" ne fait jamais rien pour les niveaux 0 à 3.
+Boss boss;
+bool bossActive = false;
+Hammer hammers[MAX_HAMMERS];
+int hammerCount = 0;
+
 void triggerGameOver();
 void showMenu();
 void nextLevel();
+void triggerVictory();
+void showVictory(int finalScore);
 
 void initSaves()
 {
@@ -265,6 +282,84 @@ void saveCurrentGame()
   saves[activeSaveSlot].score = player.score;
   saves[activeSaveSlot].lives = player.lives;
   saves[activeSaveSlot].characterId = player.characterId;
+}
+
+// ── damageBoss : centralise la perte d'un point de vie du boss ─────────────
+// Appelée par une boule de feu OU par un coup de tête sauté (les deux moyens
+// valides de le vaincre, exactement comme Bowser dans le vrai jeu).
+// boss.hitCooldown évite qu'un seul contact (qui dure plusieurs frames tant
+// que les boîtes se chevauchent) ne soit compté plusieurs fois de suite —
+// même idée que player.hitCooldown pour les Goombas, voir plus bas.
+void damageBoss()
+{
+  if (boss.hitCooldown > 0)
+    return;
+  boss.hp--;
+  boss.hitCooldown = 15; // ~0.6s avant qu'un nouveau coup ne puisse compter
+  player.score += 300;
+  if (boss.hp <= 0)
+  {
+    boss.alive = false;
+    if (boss.objBody)
+      lv_obj_add_flag(boss.objBody, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objHead)
+      lv_obj_add_flag(boss.objHead, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objEye)
+      lv_obj_add_flag(boss.objEye, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objSpike)
+      lv_obj_add_flag(boss.objSpike, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+// ── hurtPlayer : factorise "perdre le power-up OU perdre une vie" ──────────
+// Cette logique existait déjà, copiée en dur dans le bloc de collision avec
+// les Goombas (plus bas dans updateGame(), code historique INTACT, pas
+// touché pour ne rien risquer de casser). Plutôt que de la copier-coller une
+// troisième fois pour le corps du boss ET pour les marteaux, elle est
+// extraite ici une seule fois et réutilisée par les deux.
+// dangerX : position x du danger (boss ou marteau), pour savoir de quel
+// côté repousser le joueur s'il ne fait QUE perdre son power-up — même idée
+// que `(player.x > goombas[i].x) ? 2.0f : -2.0f` dans le bloc Goomba.
+// Retourne false si triggerGameOver() vient d'être déclenché (plus de vies) :
+// l'appelant DOIT alors faire `if (!hurtPlayer(...)) return;`, sinon il
+// continuerait à utiliser un état de jeu déjà réinitialisé par
+// triggerGameOver() (même piège que le code Goomba existant évite avec son
+// propre `return;` explicite juste après son appel à triggerGameOver()).
+bool hurtPlayer(float dangerX)
+{
+  if (player.hitCooldown > 0)
+    return true;
+  if (player.powerUp != POWERUP_NONE)
+  {
+    player.powerUp = POWERUP_NONE;
+    powerUpTimer = 0;
+    player.velX = (player.x > dangerX) ? 2.0f : -2.0f;
+    player.velY = JUMP_VELOCITY * 0.4f;
+    player.onGround = false;
+    player.hitCooldown = 40;
+    return true;
+  }
+  player.lives--;
+  if (player.lives < 0)
+    player.lives = 0;
+  if (player.lives == 0)
+  {
+    saves[activeSaveSlot].score = player.score;
+    saves[activeSaveSlot].currentLevel = currentLevel;
+    triggerGameOver();
+    return false;
+  }
+  saves[activeSaveSlot].lives = player.lives;
+  saves[activeSaveSlot].score = player.score;
+  saves[activeSaveSlot].currentLevel = currentLevel;
+  player.x = 50.0f;
+  player.y = GROUND_Y;
+  player.velX = 0.0f;
+  player.velY = 0.0f;
+  player.onGround = true;
+  player.hitCooldown = 40;
+  cameraX = 0.0f;
+  return true;
 }
 
 void updateGame(InputState &in)
@@ -635,6 +730,20 @@ void updateGame(InputState &in)
         break;
       }
     }
+    // BOSS : une boule de feu qui touche le boss compte comme un coup (voir
+    // damageBoss()) — c'est le premier des deux moyens valides de le vaincre,
+    // 5 coups suffisent (référence au "5000 points" du jeu original).
+    // `fb.active` est revérifié ici car la boucle Goomba juste au-dessus a pu
+    // déjà désactiver cette boule de feu sur CE même frame.
+    if (fb.active && bossActive && boss.alive &&
+        fb.x + 8 > boss.x && fb.x < boss.x + BOSS_W &&
+        fb.y + 8 > boss.y - BOSS_H && fb.y < boss.y)
+    {
+      damageBoss();
+      fb.active = false;
+      if (fb.obj)
+        lv_obj_add_flag(fb.obj, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -672,6 +781,20 @@ void updateGame(InputState &in)
   float pcx = player.x + PW * 0.5f;
   if (pcx >= flagX - 8 && pcx <= flagX + FLAG_POLE_W + 8 && player.y >= GROUND_Y - PH - 10)
   {
+    // BOSS : sur ce niveau précis (bossActive), le drapeau ne ramène pas
+    // directement au menu via nextLevel() (qui ferait ça pour currentLevel
+    // >= 4, voir plus bas) — il déclenche l'écran de victoire à la place.
+    // Si le boss est déjà vaincu (!boss.alive), bonus de 5000 points avant
+    // d'y entrer — référence directe au bonus "5 boules de feu d'affilée"
+    // du jeu original. Pas besoin de bonus s'il l'a juste évité en courant
+    // par-dessous : c'est une stratégie valide, mais moins payante.
+    if (bossActive)
+    {
+      if (!boss.alive)
+        player.score += 5000;
+      triggerVictory();
+      return;
+    }
     nextLevel();
     return;
   }
@@ -796,6 +919,120 @@ void updateGame(InputState &in)
           }
         }
       }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BOSS FINAL : patrouille, marteaux, collisions (rien ici si bossActive est
+  // resté à false, c'est-à-dire pour tous les niveaux sauf celui qui appelle
+  // addBoss() — voir Level.h / Level4.h)
+  // ══════════════════════════════════════════════════════════════════════════
+  if (bossActive && boss.alive)
+  {
+    if (boss.hitCooldown > 0)
+      boss.hitCooldown--;
+
+    // Patrouille : même logique de rebond aux bornes que les Goombas
+    // ci-dessus, mais le boss ne tombe jamais (il reste sur son pont).
+    boss.x += boss.velX;
+    if (boss.x <= boss.patrolLeft)
+    {
+      boss.x = boss.patrolLeft;
+      boss.velX = BOSS_SPEED;
+    }
+    if (boss.x + BOSS_W >= boss.patrolRight)
+    {
+      boss.x = boss.patrolRight - BOSS_W;
+      boss.velX = -BOSS_SPEED;
+    }
+
+    // Lancer de marteau : l'intervalle RACCOURCIT avec les PV restants
+    // (formule détaillée en commentaire dans GameTypes.h) pour un combat
+    // qui devient plus intense au fil des coups portés.
+    boss.throwTimer--;
+    if (boss.throwTimer <= 0)
+    {
+      int interval = BOSS_HAMMER_INTERVAL_MAX - (BOSS_MAX_HP - boss.hp) * 8;
+      if (interval < BOSS_HAMMER_INTERVAL_MIN)
+        interval = BOSS_HAMMER_INTERVAL_MIN;
+      boss.throwTimer = interval;
+
+      // Recherche d'un emplacement libre, même motif que les boules de feu
+      // (fbSlot) plus haut dans cette fonction.
+      int hSlot = -1;
+      for (int k = 0; k < MAX_HAMMERS; k++)
+        if (!hammers[k].active)
+        {
+          hSlot = k;
+          break;
+        }
+      if (hSlot < 0 && hammerCount < MAX_HAMMERS)
+        hSlot = hammerCount++;
+      if (hSlot >= hammerCount)
+        hammerCount = hSlot + 1;
+      if (hSlot >= 0)
+      {
+        // Trajectoire parabolique : vitesse verticale initiale vers le HAUT
+        // (-6, un peu plus "lourd" que le saut du joueur à -8), puis GRAVITY
+        // s'accumule chaque frame ci-dessous jusqu'à ce qu'il retombe au
+        // sol — exactement le même calcul physique que player.velY.
+        float hVelX = (player.x > boss.x) ? 2.5f : -2.5f;
+        if (!hammers[hSlot].obj)
+          hammers[hSlot].obj = makeRect(lv_scr_act(), 0, 0, 8, 8, 0x616161);
+        else
+          lv_obj_clear_flag(hammers[hSlot].obj, LV_OBJ_FLAG_HIDDEN);
+        hammers[hSlot] = {boss.x + BOSS_W * 0.5f, boss.y - BOSS_H, hVelX, -6.0f, true, hammers[hSlot].obj};
+      }
+    }
+
+    // Déplacement + collision des marteaux déjà en vol.
+    for (int i = 0; i < hammerCount; i++)
+    {
+      Hammer &h = hammers[i];
+      if (!h.active)
+        continue;
+      h.velY += GRAVITY;
+      h.x += h.velX;
+      h.y += h.velY;
+      if (h.y >= GROUND_Y || h.x < 0 || h.x > WORLD_W)
+      {
+        h.active = false;
+        if (h.obj)
+          lv_obj_add_flag(h.obj, LV_OBJ_FLAG_HIDDEN);
+        continue;
+      }
+      bool hOX = (player.x + PW > h.x) && (player.x < h.x + 8.0f);
+      bool hOY = (player.y > h.y) && (player.y - PH < h.y + 8.0f);
+      if (hOX && hOY)
+      {
+        h.active = false;
+        if (h.obj)
+          lv_obj_add_flag(h.obj, LV_OBJ_FLAG_HIDDEN);
+        if (!hurtPlayer(boss.x))
+          return;
+      }
+    }
+
+    // Contact direct avec le corps du boss : par-dessus = coup de tête
+    // sauté (second moyen valide de le vaincre, voir damageBoss()), par le
+    // côté = danger (comme un Goomba géant). Même structure que le bloc
+    // Goomba ci-dessus, avec ses propres variables locales (px1/px2/py1/py2n
+    // y sont déjà sorties de portée puisqu'elles étaient déclarées DANS la
+    // boucle "for" des Goombas).
+    float bx1 = boss.x, bx2 = boss.x + BOSS_W, by1 = boss.y - BOSS_H, by2 = boss.y;
+    float bpx1 = player.x, bpx2 = player.x + PW, bpy1 = player.y - PH, bpy2 = player.y;
+    bool bOX = (bpx2 > bx1) && (bpx1 < bx2), bOY = (bpy2 > by1) && (bpy1 < by2);
+    if (bOX && bOY)
+    {
+      bool bStomped = (py2_avant <= by1) && (bpy2 >= by1) && (player.velY > 0);
+      if (bStomped)
+      {
+        damageBoss();
+        player.velY = JUMP_VELOCITY * 0.5f;
+        player.onGround = false;
+      }
+      else if (!hurtPlayer(boss.x))
+        return;
     }
   }
 }
@@ -995,6 +1232,15 @@ static void startBtnCb(lv_event_t *e)
 #define GOOMBA_HAT_COL 0x4E342E
 #define GOOMBA_BODY_COL 0x795548
 #define GOOMBA_FEET_COL 0xD9B98C
+// ── Boss final : palette ORIGINALE (pas une recopie des couleurs d'un
+// personnage existant) — gris-bleu foncé pour la carapace, brun pour la
+// tête, un oeil rouge et une petite corne blanche pour qu'on le reconnaisse
+// du premier coup d'oeil comme "le boss", dans le même style "rectangles
+// colorés" que le reste du jeu (Goombas, joueur).
+#define BOSS_BODY_COL 0x37474F
+#define BOSS_HEAD_COL 0x6D4C41
+#define BOSS_EYE_COL 0xD32F2F
+#define BOSS_SPIKE_COL 0xECEFF1
 
 static lv_obj_t *objSky = nullptr, *objGround = nullptr;
 static lv_obj_t *objPlayer = nullptr, *objHead = nullptr;
@@ -1065,6 +1311,28 @@ void createGoombaSprites(lv_obj_t *scr)
   }
 }
 
+// ── createBossSprites : sprites du boss final, appelée depuis Level4.h (même
+// motif que createGoombaSprites() juste au-dessus : c'est le Level*.h qui
+// décide quand les créer, après avoir rempli boss via addBoss()). Ne fait
+// rien si bossActive est resté false (sécurité, normalement jamais appelée
+// dans ce cas puisque seul Level4.h l'appelle, juste après addBoss()).
+// Découpage en 4 rectangles : un corps, une tête (plus étroite, posée
+// dessus), un oeil, et une petite corne — assez pour le distinguer d'un
+// Goomba ou du joueur d'un simple coup d'oeil, dans le même style "blocs
+// colorés" que le reste du jeu.
+void createBossSprites(lv_obj_t *scr)
+{
+  if (!bossActive)
+    return;
+  int sx = (int)(boss.x - cameraX), sy = (int)(boss.y);
+  const int headH = 12;
+  int bodyH = (int)BOSS_H - headH;
+  boss.objBody = makeRect(scr, sx, sy - bodyH, (int)BOSS_W, bodyH, BOSS_BODY_COL);
+  boss.objHead = makeRect(scr, sx + 2, sy - (int)BOSS_H, (int)BOSS_W - 4, headH, BOSS_HEAD_COL);
+  boss.objEye = makeRect(scr, sx + (int)BOSS_W - 9, sy - (int)BOSS_H + 3, 4, 4, BOSS_EYE_COL);
+  boss.objSpike = makeRect(scr, sx + 4, sy - (int)BOSS_H - 4, 5, 5, BOSS_SPIKE_COL);
+}
+
 void triggerGameOver()
 {
   objGround = nullptr;
@@ -1128,6 +1396,19 @@ void triggerGameOver()
     fireballs[k].active = false;
   }
   fireballCount = 0;
+  // Boss/marteaux : même raison que le BUG FIX fireballs[] juste au-dessus —
+  // repartir avec un état et des pointeurs propres, qu'il y ait eu un boss
+  // sur ce niveau ou non (bossActive ne redevient true que si Level4::load()
+  // est rappelé ensuite, via addBoss()).
+  bossActive = false;
+  boss.alive = false;
+  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  for (int k = 0; k < MAX_HAMMERS; k++)
+  {
+    hammers[k].obj = nullptr;
+    hammers[k].active = false;
+  }
+  hammerCount = 0;
   powerUpTimer = 0;
   fireCooldown = false;
   joyUpBufferFrames = 0;
@@ -1146,6 +1427,149 @@ void triggerGameOver()
   lv_obj_clean(lv_scr_act());
   currentScreen = SCREEN_MENU;
   showMenu();
+}
+
+// ── triggerVictory : déclenchée par le drapeau final UNIQUEMENT quand
+// bossActive est vrai (voir le bloc DRAPEAU dans updateGame()) ───────────────
+// Reprend EXACTEMENT le même nettoyage que triggerGameOver() juste au-dessus
+// (mêmes pointeurs à remettre à nullptr, pour la même raison anti-Hard-Fault)
+// mais termine sur un écran de victoire dédié plutôt que de retourner
+// silencieusement au menu. Le score et le niveau sauvegardés sont remis à
+// zéro : c'est exactement ce que faisait déjà l'ancien chemin "currentLevel
+// >= 4" de nextLevel() avant l'ajout du boss (terminer le jeu = repartir
+// d'une sauvegarde fraîche) ; seul l'écran affiché entre-temps change.
+void triggerVictory()
+{
+  int finalScore = player.score;
+  objGround = nullptr;
+  objPlayer = nullptr;
+  objHead = nullptr;
+  lblScore = nullptr;
+  lblLives = nullptr;
+  lblLevel = nullptr;
+  lblDebug = nullptr;
+  spHat = nullptr;
+  spHatTop = nullptr;
+  spHatBrim = nullptr;
+  spHair[0] = nullptr;
+  spHair[1] = nullptr;
+  spSpot3 = nullptr;
+  spEye[0] = nullptr;
+  spEye[1] = nullptr;
+  spMustache = nullptr;
+  spShirt = nullptr;
+  spArm[0] = nullptr;
+  spArm[1] = nullptr;
+  spLegL = nullptr;
+  spLegR = nullptr;
+  spLegMid = nullptr;
+  spShoeL = nullptr;
+  spShoeR = nullptr;
+  objFlagPole = nullptr;
+  objFlagTop = nullptr;
+  for (int i = 0; i < MAX_PLATFORMS; i++)
+  {
+    platObjs[i] = nullptr;
+    grassCapObjs[i] = nullptr;
+  }
+  platformCount = 0;
+  for (int j = 0; j < MAX_GOOMBAS; j++)
+  {
+    goombas[j].alive = false;
+    goombas[j].objHat = nullptr;
+    goombas[j].objBody = nullptr;
+    goombas[j].objFeetL = nullptr;
+    goombas[j].objFeetR = nullptr;
+  }
+  goombaCount = 0;
+  for (int k = 0; k < blockCount; k++)
+  {
+    blocks[k].obj = nullptr;
+    blocks[k].mark = nullptr;
+  }
+  blockCount = 0;
+  for (int k = 0; k < itemCount; k++)
+    items[k].obj = nullptr;
+  itemCount = 0;
+  for (int k = 0; k < MAX_FIREBALLS; k++)
+  {
+    fireballs[k].obj = nullptr;
+    fireballs[k].active = false;
+  }
+  fireballCount = 0;
+  bossActive = false;
+  boss.alive = false;
+  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  for (int k = 0; k < MAX_HAMMERS; k++)
+  {
+    hammers[k].obj = nullptr;
+    hammers[k].active = false;
+  }
+  hammerCount = 0;
+  powerUpTimer = 0;
+  fireCooldown = false;
+  joyUpBufferFrames = 0;
+  pipeCount = 0;
+  pipeWarpTimer = 0;
+  pipeWarpCooldown = 0;
+  player.powerUp = POWERUP_NONE;
+  saves[activeSaveSlot].score = 0;
+  saves[activeSaveSlot].currentLevel = 0;
+  saves[activeSaveSlot].lives = 3;
+  lv_obj_clean(lv_scr_act());
+  currentScreen = SCREEN_VICTORY;
+  showVictory(finalScore);
+}
+
+static void victoryOkCb(lv_event_t *e)
+{
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+    return;
+  lv_obj_clean(lv_scr_act());
+  currentScreen = SCREEN_MENU;
+  showMenu();
+}
+
+// ── showVictory : écran statique affiché une fois après triggerVictory() ──
+// Même palette de couleurs que showMenu() (COL_BG/COL_TEXT_DARK/...) pour
+// rester visuellement cohérent, et même motif de bouton unique que
+// joyTestOkCb()/showJoystickTest() (un lv_button_create + lv_obj_add_event_cb
+// déclenché sur LV_EVENT_CLICKED). Écran purement statique : myTask() n'a
+// rien de spécial à faire pour SCREEN_VICTORY tant qu'on attend le clic,
+// exactement comme SCREEN_MENU n'apparaît pas non plus dans son if/else.
+void showVictory(int finalScore)
+{
+  lv_obj_t *scr = lv_scr_act();
+  lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+  lv_obj_t *title = lv_label_create(scr);
+  lv_label_set_text(title, "VICTOIRE !");
+  lv_obj_set_style_text_color(title, lv_color_hex(COL_TEXT_DARK), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 50);
+
+  lv_obj_t *msg = lv_label_create(scr);
+  lv_label_set_text(msg, "Boss final vaincu, jeu termine !");
+  lv_obj_set_style_text_color(msg, lv_color_hex(COL_TEXT_MID), 0);
+  lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 100);
+
+  lv_obj_t *scoreLbl = lv_label_create(scr);
+  char buf[40];
+  snprintf(buf, sizeof(buf), "Score final : %d", finalScore);
+  lv_label_set_text(scoreLbl, buf);
+  lv_obj_set_style_text_color(scoreLbl, lv_color_hex(COL_TEXT_DARK), 0);
+  lv_obj_align(scoreLbl, LV_ALIGN_TOP_MID, 0, 140);
+
+  lv_obj_t *btnOk = lv_button_create(scr);
+  lv_obj_set_size(btnOk, 180, 44);
+  lv_obj_set_pos(btnOk, (480 - 180) / 2, 200);
+  lv_obj_set_style_radius(btnOk, 22, 0);
+  lv_obj_set_style_bg_color(btnOk, lv_color_hex(COL_START_ON), 0);
+  lv_obj_add_event_cb(btnOk, victoryOkCb, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *lblOk = lv_label_create(btnOk);
+  lv_label_set_text(lblOk, "Retour au menu");
+  lv_obj_set_style_text_color(lblOk, lv_color_hex(0xF1EFE8), 0);
+  lv_obj_center(lblOk);
 }
 
 void nextLevel()
@@ -1222,6 +1646,16 @@ void nextLevel()
     fireballs[k].active = false;
   }
   fireballCount = 0;
+  // Boss/marteaux : même raison que le BUG FIX fireballs[] juste au-dessus.
+  bossActive = false;
+  boss.alive = false;
+  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  for (int k = 0; k < MAX_HAMMERS; k++)
+  {
+    hammers[k].obj = nullptr;
+    hammers[k].active = false;
+  }
+  hammerCount = 0;
   powerUpTimer = 0;
   fireCooldown = false;
   joyUpBufferFrames = 0;
@@ -1660,6 +2094,27 @@ void renderGame()
     lv_obj_set_pos(objFlagPole, (int)(flagX - cameraX), GROUND_VISUAL_Y - FLAG_POLE_H);
   if (objFlagTop)
     lv_obj_set_pos(objFlagTop, (int)(flagX - cameraX) - FLAG_TOP_W + FLAG_POLE_W, GROUND_VISUAL_Y - FLAG_POLE_H);
+
+  // Repositionne le boss (mêmes 4 rectangles que createBossSprites()) et ses
+  // marteaux en vol. Ne fait rien si bossActive est resté false ou si le
+  // boss est déjà vaincu (boss.alive==false ; ses sprites ont alors déjà été
+  // cachés une fois pour toutes par damageBoss(), pas besoin de les bouger).
+  if (bossActive && boss.alive)
+  {
+    int bsx = (int)(boss.x - cameraX), bsy = (int)(boss.y);
+    const int bodyH = (int)BOSS_H - 12;
+    if (boss.objBody)
+      lv_obj_set_pos(boss.objBody, bsx, bsy - bodyH);
+    if (boss.objHead)
+      lv_obj_set_pos(boss.objHead, bsx + 2, bsy - (int)BOSS_H);
+    if (boss.objEye)
+      lv_obj_set_pos(boss.objEye, bsx + (int)BOSS_W - 9, bsy - (int)BOSS_H + 3);
+    if (boss.objSpike)
+      lv_obj_set_pos(boss.objSpike, bsx + 4, bsy - (int)BOSS_H - 4);
+  }
+  for (int i = 0; i < hammerCount; i++)
+    if (hammers[i].active && hammers[i].obj)
+      lv_obj_set_pos(hammers[i].obj, (int)(hammers[i].x - cameraX), (int)(hammers[i].y));
 }
 
 void showGame()
@@ -1728,6 +2183,20 @@ void showGame()
     fireballs[k].active = false;
   }
   fireballCount = 0;
+  // Boss/marteaux : même raison que le BUG FIX fireballs[] juste au-dessus.
+  // bossActive ne repasse à true que si le niveau chargé ensuite par
+  // initGameObjects() -> Level::load() appelle addBoss() (seul Level4 le
+  // fait) — donc pour tous les autres niveaux, ce bloc garantit qu'aucun
+  // combat de boss "fantôme" d'un niveau précédent ne reste actif.
+  bossActive = false;
+  boss.alive = false;
+  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  for (int k = 0; k < MAX_HAMMERS; k++)
+  {
+    hammers[k].obj = nullptr;
+    hammers[k].active = false;
+  }
+  hammerCount = 0;
   powerUpTimer = 0;
   fireCooldown = false;
   joyUpBufferFrames = 0;
