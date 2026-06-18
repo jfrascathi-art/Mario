@@ -185,7 +185,7 @@ protected:
         boss.throwTimer = BOSS_HAMMER_INTERVAL_MAX;
         boss.patrolLeft = patrolLeft;
         boss.patrolRight = patrolRight;
-        boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+        boss.objBody = boss.objBelly = boss.objHead = boss.objEyeL = boss.objEyeR = boss.objBrow = boss.objHornL = boss.objHornR = nullptr;
         bossActive = true;
     }
 };

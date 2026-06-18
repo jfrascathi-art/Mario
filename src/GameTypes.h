@@ -153,6 +153,23 @@ struct Pipe
 //     payant en score.
 // boss.x / boss.y suivent exactement la même convention que player.x/y :
 // (x,y) = coin haut-gauche en x, position des PIEDS en y.
+//
+// REDESIGN visuel (corrige le "méchant moche") : l'ancienne version n'avait
+// qu'un seul oeil et une seule corne, placés au hasard (oeil décalé de +7px
+// par rapport au centre de la tête, corne décalée de -7.5px) — aucun axe de
+// symétrie, donc ça ne se lisait pas comme "un visage" mais comme "un
+// rectangle avec deux bouts collés dessus". Le nouveau design applique les
+// mêmes principes qu'on avait tirés de l'étude de Bowser (silhouette nette,
+// expression exagérée, trait signature, couleurs contrastées et voulues),
+// mais avec des formes 100% originales :
+//   - deux CORNES symétriques (objHornL/R) en haut de la tête -> silhouette
+//     immédiatement reconnaissable, même en miniature ;
+//   - deux YEUX symétriques (objEyeL/R) + un SOURCIL (objBrow) qui les
+//     surplombe -> expression "en colère", trait signature du boss ;
+//   - un PLASTRON clair (objBelly) centré sur le corps -> 3e couleur qui
+//     casse la silhouette sombre du corps, sans copier la palette d'un
+//     personnage existant (voir BOSS_BELLY_COL plus bas, même famille de
+//     teintes que le corps pour rester cohérent).
 struct Boss
 {
     float x, y, velX;
@@ -161,7 +178,7 @@ struct Boss
     int hitCooldown; // frames d'invincibilité après un coup reçu (anti double-compte)
     int throwTimer;  // frames restantes avant le prochain lancer de marteau
     float patrolLeft, patrolRight;
-    lv_obj_t *objBody, *objHead, *objEye, *objSpike;
+    lv_obj_t *objBody, *objBelly, *objHead, *objEyeL, *objEyeR, *objBrow, *objHornL, *objHornR;
 };
 
 #define BOSS_W 28.0f

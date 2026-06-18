@@ -66,7 +66,21 @@ public:
         // nouvel escalier reculé (voir plus bas) — ramenée à x=2952, dans
         // le petit espace de 20px qui reste entre la sortie de la grotte 14
         // (x=2950) et le début de l'escalier (x=2970).
-        addPipe(2428, 48, true, 2952);
+        // BUG FIX #2 : le tube était à x=2428, donc son CHAPEAU (qui dépasse
+        // de PIPE_OVERHANG=4px de chaque côté du corps, voir addPipe() dans
+        // Level.h) commençait réellement à x=2428-4=2424. La grotte 13
+        // (addCave(2000,420)) se termine à x=2000+420=2420 : il ne restait
+        // donc que 2424-2420=4px entre le mur SOLIDE de la grotte et le mur
+        // SOLIDE du tube — bien moins que les 32px utilisés comme marge de
+        // sécurité partout ailleurs dans ce fichier après un mur de grotte
+        // (cf. grottes 11/12 plus haut). Le joueur sortait du tunnel quasi
+        // collé au tube, sans place pour se réceptionner.
+        // Décalé à x=2456 : chapeau désormais à 2456-4=2452, donc exactement
+        // 2452-2420=32px après la grotte (même marge que partout ailleurs),
+        // et il reste 2500-(2452+32)=16px avant la plateforme 16 — sans
+        // problème puisqu'une plateforme flottante n'a pas de mur latéral
+        // (solid=false), contrairement à une grotte ou à un tube.
+        addPipe(2456, 48, true, 2952);
         // Escalier final.
         // BUG FIX : se terminait à flagX-10, dans la zone de déclenchement
         // du drapeau (flagX-8, voir updateGame()) — reculé pour finir à

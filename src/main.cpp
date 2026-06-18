@@ -302,12 +302,20 @@ void damageBoss()
     boss.alive = false;
     if (boss.objBody)
       lv_obj_add_flag(boss.objBody, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objBelly)
+      lv_obj_add_flag(boss.objBelly, LV_OBJ_FLAG_HIDDEN);
     if (boss.objHead)
       lv_obj_add_flag(boss.objHead, LV_OBJ_FLAG_HIDDEN);
-    if (boss.objEye)
-      lv_obj_add_flag(boss.objEye, LV_OBJ_FLAG_HIDDEN);
-    if (boss.objSpike)
-      lv_obj_add_flag(boss.objSpike, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objEyeL)
+      lv_obj_add_flag(boss.objEyeL, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objEyeR)
+      lv_obj_add_flag(boss.objEyeR, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objBrow)
+      lv_obj_add_flag(boss.objBrow, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objHornL)
+      lv_obj_add_flag(boss.objHornL, LV_OBJ_FLAG_HIDDEN);
+    if (boss.objHornR)
+      lv_obj_add_flag(boss.objHornR, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -1233,14 +1241,18 @@ static void startBtnCb(lv_event_t *e)
 #define GOOMBA_BODY_COL 0x795548
 #define GOOMBA_FEET_COL 0xD9B98C
 // ── Boss final : palette ORIGINALE (pas une recopie des couleurs d'un
-// personnage existant) — gris-bleu foncé pour la carapace, brun pour la
-// tête, un oeil rouge et une petite corne blanche pour qu'on le reconnaisse
-// du premier coup d'oeil comme "le boss", dans le même style "rectangles
-// colorés" que le reste du jeu (Goombas, joueur).
+// personnage existant) — gris-bleu foncé pour la carapace, un plastron
+// gris-bleu plus CLAIR (même famille de teintes, juste éclairci) pour casser
+// la silhouette, brun pour la tête, deux yeux rouges symétriques surmontés
+// d'un sourcil presque noir pour l'expression "en colère", et deux cornes
+// ivoire pour la silhouette — voir le détail des positions dans
+// createBossSprites().
 #define BOSS_BODY_COL 0x37474F
+#define BOSS_BELLY_COL 0x607D8B
 #define BOSS_HEAD_COL 0x6D4C41
 #define BOSS_EYE_COL 0xD32F2F
-#define BOSS_SPIKE_COL 0xECEFF1
+#define BOSS_BROW_COL 0x212121
+#define BOSS_HORN_COL 0xECEFF1
 
 static lv_obj_t *objSky = nullptr, *objGround = nullptr;
 static lv_obj_t *objPlayer = nullptr, *objHead = nullptr;
@@ -1316,21 +1328,37 @@ void createGoombaSprites(lv_obj_t *scr)
 // décide quand les créer, après avoir rempli boss via addBoss()). Ne fait
 // rien si bossActive est resté false (sécurité, normalement jamais appelée
 // dans ce cas puisque seul Level4.h l'appelle, juste après addBoss()).
-// Découpage en 4 rectangles : un corps, une tête (plus étroite, posée
-// dessus), un oeil, et une petite corne — assez pour le distinguer d'un
-// Goomba ou du joueur d'un simple coup d'oeil, dans le même style "blocs
-// colorés" que le reste du jeu.
+//
+// Découpage en 8 rectangles (corps, plastron, tête, 2 yeux, sourcil,
+// 2 cornes) — voir GameTypes.h pour le pourquoi du redesign. Toutes les
+// positions ci-dessous sont calculées pour être SYMÉTRIQUES par rapport à
+// l'axe vertical de la tête (headX + headW/2), contrairement à l'ancienne
+// version :
+//   tête  : x=[sx+2, sx+26], largeur 24, centre à sx+14
+//   cornes: gauche x=sx+2 (centre sx+4.5), droite x=sx+21 (centre sx+23.5)
+//           -> 9.5px de chaque côté du centre de tête (sx+14)
+//   yeux  : gauche x=sx+5 (centre sx+7), droite x=sx+19 (centre sx+21)
+//           -> 7px de chaque côté du centre de tête
+//   sourcil: x=sx+5, largeur 18 -> couvre exactement les deux yeux
+//   plastron: largeur 12 centrée sur le corps (largeur 28) -> x=sx+8
 void createBossSprites(lv_obj_t *scr)
 {
   if (!bossActive)
     return;
   int sx = (int)(boss.x - cameraX), sy = (int)(boss.y);
-  const int headH = 12;
+  const int headH = 12, headW = (int)BOSS_W - 4, headX = 2;
   int bodyH = (int)BOSS_H - headH;
+
   boss.objBody = makeRect(scr, sx, sy - bodyH, (int)BOSS_W, bodyH, BOSS_BODY_COL);
-  boss.objHead = makeRect(scr, sx + 2, sy - (int)BOSS_H, (int)BOSS_W - 4, headH, BOSS_HEAD_COL);
-  boss.objEye = makeRect(scr, sx + (int)BOSS_W - 9, sy - (int)BOSS_H + 3, 4, 4, BOSS_EYE_COL);
-  boss.objSpike = makeRect(scr, sx + 4, sy - (int)BOSS_H - 4, 5, 5, BOSS_SPIKE_COL);
+  boss.objBelly = makeRect(scr, sx + 8, sy - bodyH + 4, 12, 14, BOSS_BELLY_COL);
+  boss.objHead = makeRect(scr, sx + headX, sy - (int)BOSS_H, headW, headH, BOSS_HEAD_COL);
+
+  boss.objHornL = makeRect(scr, sx + headX, sy - (int)BOSS_H - 6, 5, 6, BOSS_HORN_COL);
+  boss.objHornR = makeRect(scr, sx + headX + headW - 5, sy - (int)BOSS_H - 6, 5, 6, BOSS_HORN_COL);
+
+  boss.objBrow = makeRect(scr, sx + headX + 3, sy - (int)BOSS_H + 2, 18, 2, BOSS_BROW_COL);
+  boss.objEyeL = makeRect(scr, sx + headX + 3, sy - (int)BOSS_H + 4, 4, 4, BOSS_EYE_COL);
+  boss.objEyeR = makeRect(scr, sx + headX + headW - 7, sy - (int)BOSS_H + 4, 4, 4, BOSS_EYE_COL);
 }
 
 void triggerGameOver()
@@ -1402,7 +1430,7 @@ void triggerGameOver()
   // est rappelé ensuite, via addBoss()).
   bossActive = false;
   boss.alive = false;
-  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  boss.objBody = boss.objBelly = boss.objHead = boss.objEyeL = boss.objEyeR = boss.objBrow = boss.objHornL = boss.objHornR = nullptr;
   for (int k = 0; k < MAX_HAMMERS; k++)
   {
     hammers[k].obj = nullptr;
@@ -1499,7 +1527,7 @@ void triggerVictory()
   fireballCount = 0;
   bossActive = false;
   boss.alive = false;
-  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  boss.objBody = boss.objBelly = boss.objHead = boss.objEyeL = boss.objEyeR = boss.objBrow = boss.objHornL = boss.objHornR = nullptr;
   for (int k = 0; k < MAX_HAMMERS; k++)
   {
     hammers[k].obj = nullptr;
@@ -1649,7 +1677,7 @@ void nextLevel()
   // Boss/marteaux : même raison que le BUG FIX fireballs[] juste au-dessus.
   bossActive = false;
   boss.alive = false;
-  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  boss.objBody = boss.objBelly = boss.objHead = boss.objEyeL = boss.objEyeR = boss.objBrow = boss.objHornL = boss.objHornR = nullptr;
   for (int k = 0; k < MAX_HAMMERS; k++)
   {
     hammers[k].obj = nullptr;
@@ -2095,22 +2123,31 @@ void renderGame()
   if (objFlagTop)
     lv_obj_set_pos(objFlagTop, (int)(flagX - cameraX) - FLAG_TOP_W + FLAG_POLE_W, GROUND_VISUAL_Y - FLAG_POLE_H);
 
-  // Repositionne le boss (mêmes 4 rectangles que createBossSprites()) et ses
+  // Repositionne le boss (mêmes 8 rectangles que createBossSprites()) et ses
   // marteaux en vol. Ne fait rien si bossActive est resté false ou si le
   // boss est déjà vaincu (boss.alive==false ; ses sprites ont alors déjà été
   // cachés une fois pour toutes par damageBoss(), pas besoin de les bouger).
   if (bossActive && boss.alive)
   {
     int bsx = (int)(boss.x - cameraX), bsy = (int)(boss.y);
-    const int bodyH = (int)BOSS_H - 12;
+    const int headH = 12, headW = (int)BOSS_W - 4, headX = 2;
+    const int bodyH = (int)BOSS_H - headH;
     if (boss.objBody)
       lv_obj_set_pos(boss.objBody, bsx, bsy - bodyH);
+    if (boss.objBelly)
+      lv_obj_set_pos(boss.objBelly, bsx + 8, bsy - bodyH + 4);
     if (boss.objHead)
-      lv_obj_set_pos(boss.objHead, bsx + 2, bsy - (int)BOSS_H);
-    if (boss.objEye)
-      lv_obj_set_pos(boss.objEye, bsx + (int)BOSS_W - 9, bsy - (int)BOSS_H + 3);
-    if (boss.objSpike)
-      lv_obj_set_pos(boss.objSpike, bsx + 4, bsy - (int)BOSS_H - 4);
+      lv_obj_set_pos(boss.objHead, bsx + headX, bsy - (int)BOSS_H);
+    if (boss.objHornL)
+      lv_obj_set_pos(boss.objHornL, bsx + headX, bsy - (int)BOSS_H - 6);
+    if (boss.objHornR)
+      lv_obj_set_pos(boss.objHornR, bsx + headX + headW - 5, bsy - (int)BOSS_H - 6);
+    if (boss.objBrow)
+      lv_obj_set_pos(boss.objBrow, bsx + headX + 3, bsy - (int)BOSS_H + 2);
+    if (boss.objEyeL)
+      lv_obj_set_pos(boss.objEyeL, bsx + headX + 3, bsy - (int)BOSS_H + 4);
+    if (boss.objEyeR)
+      lv_obj_set_pos(boss.objEyeR, bsx + headX + headW - 7, bsy - (int)BOSS_H + 4);
   }
   for (int i = 0; i < hammerCount; i++)
     if (hammers[i].active && hammers[i].obj)
@@ -2190,7 +2227,7 @@ void showGame()
   // combat de boss "fantôme" d'un niveau précédent ne reste actif.
   bossActive = false;
   boss.alive = false;
-  boss.objBody = boss.objHead = boss.objEye = boss.objSpike = nullptr;
+  boss.objBody = boss.objBelly = boss.objHead = boss.objEyeL = boss.objEyeR = boss.objBrow = boss.objHornL = boss.objHornR = nullptr;
   for (int k = 0; k < MAX_HAMMERS; k++)
   {
     hammers[k].obj = nullptr;
